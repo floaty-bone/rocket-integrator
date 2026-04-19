@@ -1,7 +1,17 @@
 [project]
-name = "starship"
-version = "0.1.0"
-description = "Add your description here"
+name = "rocket-integrator"
+version = "1.0.0"
+description = "6-DOF rigid-body dynamics simulator using a 4th-order Runge-Kutta integration scheme."
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "scipy>=1.12",
+]
+
+[project.scripts]
+simulate = "main:main"
+
+[tool.ruff]
+line-length = 100
