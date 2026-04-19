@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# C++ build artifacts
+cpp/build/
+cpp/**/*.o
+cpp/**/*.a
