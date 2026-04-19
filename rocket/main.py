@@ -14,8 +14,8 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from integrator import RK4Integrator
-from helper import quat_to_rotmat
+from rocket.integrator import RK4Integrator
+from rocket.helper import quat_to_rotmat
 
 
 # =============================================================================

@@ -14,7 +14,7 @@ from typing import Callable
 
 import numpy as np
 
-from helper import (
+from rocket.helper import (
     ForceMomentVector,
     StateVector,
     construct_omega_matrix,
