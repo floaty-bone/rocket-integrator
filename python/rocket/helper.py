@@ -21,12 +21,12 @@ import numpy.typing as npt
 # Type aliases
 # ---------------------------------------------------------------------------
 
-StateVector               = Annotated[npt.NDArray[np.float64], (13,)]
-EnginesThrustArray        = Annotated[npt.NDArray[np.float64], (3, 3)]   # [theta, phi, thrust] per engine
-ForceMomentVector         = Annotated[npt.NDArray[np.float64], (6,)]     # [Fx, Fy, Fz, Mx, My, Mz]
-AngularVelocityVector     = Annotated[npt.NDArray[np.float64], (3,)]     # [wx, wy, wz]  (body frame)
-QuaternionVector          = Annotated[npt.NDArray[np.float64], (4,)]     # [qw, qx, qy, qz]
-GravityVector             = Annotated[npt.NDArray[np.float64], (3,)]     # [gx, gy, gz]  (inertial frame)
+StateVector           = Annotated[npt.NDArray[np.float64], (13,)]
+EnginesThrustArray    = Annotated[npt.NDArray[np.float64], (3, 3)]  # [theta, phi, thrust] per engine
+BodyWrench            = Annotated[npt.NDArray[np.float64], (6,)]    # [Fx, Fy, Fz, Mx, My, Mz] — body frame
+InertialForceVector   = Annotated[npt.NDArray[np.float64], (3,)]    # [Fx, Fy, Fz] — inertial frame (N)
+AngularVelocityVector = Annotated[npt.NDArray[np.float64], (3,)]    # [wx, wy, wz]  (body frame)
+QuaternionVector      = Annotated[npt.NDArray[np.float64], (4,)]    # [qw, qx, qy, qz]
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ def compute_thrust_forces_and_moments(
     engine_thrust: EnginesThrustArray,
     a: float,
     l: float,
-) -> ForceMomentVector:
+) -> BodyWrench:
     """Compute the total  force and moment from three gimballed engines expressed in the body frame.
 
     Engines are arranged in an equilateral triangle at the base of the rocket.

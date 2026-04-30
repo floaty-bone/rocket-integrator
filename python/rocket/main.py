@@ -24,36 +24,26 @@ from rocket.helper import quat_to_rotmat, compute_thrust_forces_and_moments
 # CONFIG — edit these values to change the simulation scenario
 # =============================================================================
 
-# Applied force/moment vector in the body frame [Fx, Fy, Fz, Mx, My, Mz]
-# Examples:
-#   Pure roll  : [0, 0, 0, 650,   0,   0]
-#   Pure pitch : [0, 0, 0,   0, 700,   0]
-#   Pure yaw   : [0, 0, 0,   0,   0, 550]
-#   Combined   : [0, 0, 0, 650, 700, 550]  ← default
-#FORCE_MOMENT = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
-"""
-FORCE_MOMENT = compute_thrust_forces_and_moments(
+# Body-frame wrench [Fx, Fy, Fz, Mx, My, Mz] from actuators (thrust, TVC, etc.)
+# max thrust sea level raptor engine: 2.8 MN, min thrust: 40% of max
+BODY_WRENCH = compute_thrust_forces_and_moments(  # 40% of single engine thrust
     engine_thrust=np.array([
-        [0.0, 0.8, 2.0],
-        [0.0, 0.8, 2.0],
-        [0.0, 0.8, 2.0]
-    ], dtype=np.float64),
-    a=2.0,
-    l=7
-)
-"""
-# max thrust sea level raptor engine: 2.8 MN, min thrust : 40% of max
-THRUST_FORCE_MOMENT = compute_thrust_forces_and_moments(  #40% of engine thrust
-    engine_thrust=np.array([
-        [0.0, 0, 0.42*2.8e6],
         [0.0, 0, 0.0],
+        [0.0, 0, 0.42 * 2.8e6],
         [0.0, 0, 0.0],
     ], dtype=np.float64),
     a=2.0,
-    l=7
+    l=7,
 )
-WEIGHT_FORCE_MOMENT = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
-FORCE_MOMENT = THRUST_FORCE_MOMENT + WEIGHT_FORCE_MOMENT
+
+# Vehicle mass used for both the integrator and the gravity force below.
+VEHICLE_MASS = 120_000.0   # kg
+
+# Gravitational acceleration (m/s²).  Positive Z is "up" in this simulation,
+# so gravity points in the -Z direction.  Expressed in Newtons so it feeds
+# directly into get_inertial_force (force = mass * g_vec).
+_G = 9.8
+GRAVITY_FORCE = np.array([-VEHICLE_MASS * _G, 0.0, 0.0], dtype=np.float64)
 
 # Initial state  [x, y, z,  qw, qx, qy, qz,  vx, vy, vz,  wx, wy, wz]
 INITIAL_STATE = np.array(
@@ -65,7 +55,7 @@ INITIAL_STATE = np.array(
 INERTIA_MATRIX = np.diag([1.2e6, 2.5e7, 2.5e7])  # [Ixx, Iyy, Izz] #empty estimates for starship (dry), should be updated with more accurate values when available
 
 # Simulation timing
-SIM_TIME    = 15   # total duration (s)
+SIM_TIME    = 5   # total duration (s)
 STEP_SIZE   = 0.001   # RK4 time-step (s)
 SAMPLE_RATE = 50      # save every Nth integration step (controls animation resolution)
 
@@ -89,12 +79,12 @@ def run_simulation() -> np.ndarray:
         Array of shape (n_frames, 13) containing the sampled state vectors.
     """
     integrator = RK4Integrator(
-        get_force_moment=lambda: FORCE_MOMENT,
+        get_body_wrench=lambda: BODY_WRENCH,
+        get_inertial_force=lambda: GRAVITY_FORCE,
         inertia_matrix=INERTIA_MATRIX,
         length=BODY_LENGTH,
         radius=2.0,
-        mass=120000,
-        gravity=-9.8,
+        mass=VEHICLE_MASS,
         step_size=STEP_SIZE,
     )
 
