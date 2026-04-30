@@ -37,7 +37,11 @@ class RK4Integrator:
 
     Args:
         get_force_moment: Callable that returns a 6-element force/moment vector
-                          [Fx, Fy, Fz, Mx, My, Mz] in the body frame.
+                          [Fx, Fy, Fz, Mx, My, Mz]. Both forces and moments
+                          must be expressed in the body frame. Forces are
+                          rotated to the inertial frame internally (R @ F_body)
+                          before computing dv/dt; moments are used directly in
+                          the body frame in Euler's rotation equation.
         inertia_matrix:   3×3 inertia tensor in the body frame (kg·m²).
                           Defaults to the identity matrix.
         length:           Characteristic length of the rocket (m). Default 7.
@@ -49,6 +53,7 @@ class RK4Integrator:
 
     Raises:
         np.linalg.LinAlgError: If the provided inertia matrix is singular.
+        
     """
 
     def __init__(

@@ -10,12 +10,14 @@ All tunable parameters are grouped under the CONFIG section below.
 from __future__ import annotations
 
 import numpy as np
+import matplotlib
+matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from rocket.integrator import RK4Integrator
-from rocket.helper import quat_to_rotmat
+from rocket.helper import quat_to_rotmat, compute_thrust_forces_and_moments
 
 
 # =============================================================================
@@ -28,19 +30,42 @@ from rocket.helper import quat_to_rotmat
 #   Pure pitch : [0, 0, 0,   0, 700,   0]
 #   Pure yaw   : [0, 0, 0,   0,   0, 550]
 #   Combined   : [0, 0, 0, 650, 700, 550]  ← default
-FORCE_MOMENT = np.array([0.0, 0.0, 0.0, 650.0, 700.0, 550.0], dtype=np.float64)
+#FORCE_MOMENT = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
+"""
+FORCE_MOMENT = compute_thrust_forces_and_moments(
+    engine_thrust=np.array([
+        [0.0, 0.8, 2.0],
+        [0.0, 0.8, 2.0],
+        [0.0, 0.8, 2.0]
+    ], dtype=np.float64),
+    a=2.0,
+    l=7
+)
+"""
+# max thrust sea level raptor engine: 2.8 MN, min thrust : 40% of max
+THRUST_FORCE_MOMENT = compute_thrust_forces_and_moments(  #40% of engine thrust
+    engine_thrust=np.array([
+        [0.0, 0, 0.42*2.8e6],
+        [0.0, 0, 0.0],
+        [0.0, 0, 0.0],
+    ], dtype=np.float64),
+    a=2.0,
+    l=7
+)
+WEIGHT_FORCE_MOMENT = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
+FORCE_MOMENT = THRUST_FORCE_MOMENT + WEIGHT_FORCE_MOMENT
 
 # Initial state  [x, y, z,  qw, qx, qy, qz,  vx, vy, vz,  wx, wy, wz]
 INITIAL_STATE = np.array(
-    [0, 0, 0,  1, 0, 0, 0,  0, 0, 0,  4, 0.01, 0.01],
+    [0, 0, 0,  1, 0, 0, 0,  0, 0, 0,  0.0, 0.0, 0.0],
     dtype=np.float64,
 )
 
 # Inertia tensor (kg·m²)
-INERTIA_MATRIX = np.diag([300.0, 100.0, 30.0])
+INERTIA_MATRIX = np.diag([1.2e6, 2.5e7, 2.5e7])  # [Ixx, Iyy, Izz] #empty estimates for starship (dry), should be updated with more accurate values when available
 
 # Simulation timing
-SIM_TIME    = 100.0   # total duration (s)
+SIM_TIME    = 15   # total duration (s)
 STEP_SIZE   = 0.001   # RK4 time-step (s)
 SAMPLE_RATE = 50      # save every Nth integration step (controls animation resolution)
 
@@ -68,8 +93,8 @@ def run_simulation() -> np.ndarray:
         inertia_matrix=INERTIA_MATRIX,
         length=BODY_LENGTH,
         radius=2.0,
-        mass=85_000,
-        gravity=0.0,
+        mass=120000,
+        gravity=-9.8,
         step_size=STEP_SIZE,
     )
 
@@ -80,12 +105,15 @@ def run_simulation() -> np.ndarray:
     state = INITIAL_STATE.copy()
     trajectory[0] = state
 
+    report_every = n_steps // 10
     frame_idx = 1
     for step_idx in range(1, n_steps):
         state = integrator.step_forward(state)
         if step_idx % SAMPLE_RATE == 0 and frame_idx < n_frames:
             trajectory[frame_idx] = state
             frame_idx += 1
+        if report_every and step_idx % report_every == 0:
+            print(f"  {step_idx * 100 // n_steps}%…", flush=True)
 
     return trajectory[:frame_idx]   # trim any unused pre-allocated rows
 

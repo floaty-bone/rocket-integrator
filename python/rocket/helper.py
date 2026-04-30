@@ -113,8 +113,8 @@ def engine_spherical_to_body_force(
     theta, phi, r = spherical[..., 0], spherical[..., 1], spherical[..., 2]
     return np.array([
          r * np.cos(phi),
-        -r * np.sin(phi) * np.sin(theta),
-        -r * np.cos(theta) * np.sin(phi),
+        +r * np.sin(phi) * np.sin(theta),
+        +r * np.cos(theta) * np.sin(phi),
     ], dtype=np.float64)
 
 
@@ -123,7 +123,7 @@ def compute_thrust_forces_and_moments(
     a: float,
     l: float,
 ) -> ForceMomentVector:
-    """Compute the total body-frame force and moment from three gimballed engines.
+    """Compute the total  force and moment from three gimballed engines expressed in the body frame.
 
     Engines are arranged in an equilateral triangle at the base of the rocket.
     Moments are taken about the centre of mass G.
@@ -142,15 +142,15 @@ def compute_thrust_forces_and_moments(
 
     resultant = np.array([
         +np.sum(thrust * np.cos(phi)),
-        -np.sum(thrust * np.sin(phi) * np.sin(theta)),
-        -np.sum(thrust * np.sin(phi) * np.cos(theta)),
+        +np.sum(thrust * np.sin(phi) * np.sin(theta)),
+        +np.sum(thrust * np.sin(phi) * np.cos(theta)),
     ], dtype=np.float64)
 
     # Engine attachment points in body frame (equilateral triangle)
     GE = np.array([
-        [-l, -a * cos(pi / 6),  a * cos(pi / 3)],
-        [-l,  a * cos(pi / 6),  a * cos(pi / 3)],
-        [-l,  0.0,             -a              ],
+        [-l, a * cos(pi / 6),  -a * cos(pi / 3)],
+        [-l,  0.0,             a              ],
+        [-l,  -a * cos(pi / 6),  -a * cos(pi / 3)],
     ], dtype=np.float64)
 
     total_moment = sum(
@@ -159,3 +159,19 @@ def compute_thrust_forces_and_moments(
     )
 
     return np.concatenate((resultant, total_moment))
+
+def body_frame_to_inertial_frame_force(
+    body_force: npt.NDArray[np.float64],
+    quaternion: QuaternionVector,
+) -> npt.NDArray[np.float64]:
+    """Convert a force vector from the body frame to the inertial frame.
+
+    Args:
+        body_force: Force vector [Fx, Fy, Fz] in the body frame.
+        quaternion:  Orientation of the body as a unit quaternion [qw, qx, qy, qz].
+
+    Returns:
+        Force vector in the inertial frame.
+    """
+    R = quat_to_rotmat(quaternion)
+    return R @ body_force
