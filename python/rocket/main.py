@@ -28,12 +28,12 @@ from rocket.helper import quat_to_rotmat, compute_thrust_forces_and_moments
 # max thrust sea level raptor engine: 2.8 MN, min thrust: 40% of max
 BODY_WRENCH = compute_thrust_forces_and_moments(  # 40% of single engine thrust
     engine_thrust=np.array([
-        [0.0, 0, 0.0],
-        [0.0, 0, 0.42 * 2.8e6],
-        [0.0, 0, 0.0],
+        [3.14, 0.4, 0.30 * 2.8e6],
+        [3.14, 0.4, 0.30 * 2.8e6],
+        [3.14, 0.4, 0.30 * 2.8e6],
     ], dtype=np.float64),
-    a=2.0,
-    l=7,
+    a=1.5,
+    l=18,
 )
 
 # Vehicle mass used for both the integrator and the gravity force below.
@@ -43,16 +43,16 @@ VEHICLE_MASS = 120_000.0   # kg
 # so gravity points in the -Z direction.  Expressed in Newtons so it feeds
 # directly into get_inertial_force (force = mass * g_vec).
 _G = 9.8
-GRAVITY_FORCE = np.array([-VEHICLE_MASS * _G, 0.0, 0.0], dtype=np.float64)
+GRAVITY_FORCE = np.array([0.0, 0.0, -VEHICLE_MASS * _G], dtype=np.float64)
 
 # Initial state  [x, y, z,  qw, qx, qy, qz,  vx, vy, vz,  wx, wy, wz]
 INITIAL_STATE = np.array(
-    [0, 0, 0,  1, 0, 0, 0,  0, 0, 0,  0.0, 0.0, 0.0],
+    [0, 0, 0,  1, 0, 0, 0,  0, 0, -50,  0.0, 0.0, 0.0],
     dtype=np.float64,
 )
 
 # Inertia tensor (kg·m²)
-INERTIA_MATRIX = np.diag([1.2e6, 2.5e7, 2.5e7])  # [Ixx, Iyy, Izz] #empty estimates for starship (dry), should be updated with more accurate values when available
+INERTIA_MATRIX = np.diag([1.2e6, 3.5e7, 3.5e7])  # [Ixx, Iyy, Izz] #empty estimates for starship (dry), should be updated with more accurate values when available
 
 # Simulation timing
 SIM_TIME    = 5   # total duration (s)
@@ -64,8 +64,22 @@ BODY_LENGTH = 4.0   # X extent (m)
 BODY_WIDTH  = 2.0   # Y extent (m)
 BODY_HEIGHT = 1.0   # Z extent (m)
 
+# Rocket render geometry — cylinder + conical nose, long axis along body X.
+# Body-frame origin = vehicle centre of mass; ROCKET_BASE_BELOW_COM places the
+# base of the cylinder that many metres below the CoM along -X.
+ROCKET_DIAMETER       = 9.0    # m  (cylinder + cone base diameter)
+ROCKET_HEIGHT         = 50.0   # m  (base of cylinder → tip of nose, along body X)
+ROCKET_NOSE_HEIGHT    = 10.0   # m  (length of conical nose section)
+ROCKET_BASE_BELOW_COM = 20.0   # m  (CoM-to-base distance along -X)
+N_CIRCLE_SEGMENTS     = 32     # azimuthal mesh resolution
+
 # Animation
 ANIMATION_INTERVAL_MS = 20   # milliseconds between frames
+
+# Output: set OUTPUT_FILE to a path (e.g. "rocket.mp4") to render at real-time
+# speed instead of showing the live (slow) interactive window. Requires ffmpeg
+# on PATH for .mp4; .gif works out-of-the-box via Pillow.
+OUTPUT_FILE = None
 
 
 # =============================================================================
@@ -112,27 +126,73 @@ def run_simulation() -> np.ndarray:
 # ANIMATION
 # =============================================================================
 
-# Cuboid face vertex indices
-_CUBOID_FACES = [
-    [0, 1, 2, 3],   # bottom
-    [4, 5, 6, 7],   # top
-    [0, 1, 5, 4],   # front
-    [2, 3, 7, 6],   # back
-    [0, 3, 7, 4],   # left
-    [1, 2, 6, 5],   # right
-]
-_FACE_COLORS = ["cyan", "cyan", "blue", "blue", "red", "red"]
 _AXIS_COLORS  = ["r", "g", "b"]
 _AXIS_LABELS  = ["X (Roll)", "Y (Pitch)", "Z (Yaw)"]
 
+# Rocket render colours — two cylinder halves (so roll is visible), nose, base cap.
+_CYL_COLOR_A = "white"
+_CYL_COLOR_B = "lightgray"
+_NOSE_COLOR  = "crimson"
+_BASE_COLOR  = "dimgray"
 
-def _make_cuboid_vertices(length: float, width: float, height: float) -> np.ndarray:
-    """Return the 8 corner vertices of a cuboid centred at the origin."""
-    l, w, h = length / 2, width / 2, height / 2
-    return np.array([
-        [-l, -w, -h], [ l, -w, -h], [ l,  w, -h], [-l,  w, -h],  # bottom ring
-        [-l, -w,  h], [ l, -w,  h], [ l,  w,  h], [-l,  w,  h],  # top ring
-    ], dtype=np.float64)
+
+def _make_rocket_mesh(
+    diameter: float,
+    total_height: float,
+    nose_height: float,
+    base_below_com: float,
+    n_seg: int,
+) -> tuple[np.ndarray, list[list[int]], list[str]]:
+    """Build a rocket mesh (cylinder + conical nose) anchored to the CoM.
+
+    The long axis is body X; the cone tip points in +X.  ``base_below_com`` is
+    the distance from the body-frame origin (CoM) down to the base of the
+    cylinder, so the base sits at x = -base_below_com and the tip at
+    x = total_height - base_below_com.
+
+    Returns the vertex array and a parallel list of polygon face index-lists
+    plus their colours, suitable for ``Poly3DCollection``.
+    """
+    radius     = diameter / 2.0
+    cyl_length = total_height - nose_height
+    x_base     = -base_below_com
+    x_shoulder = x_base + cyl_length
+    x_tip      = x_base + total_height
+
+    angles = np.linspace(0.0, 2.0 * np.pi, n_seg, endpoint=False)
+    cy = radius * np.cos(angles)
+    cz = radius * np.sin(angles)
+
+    base_ring     = np.column_stack([np.full(n_seg, x_base),     cy, cz])
+    shoulder_ring = np.column_stack([np.full(n_seg, x_shoulder), cy, cz])
+    tip           = np.array([[x_tip, 0.0, 0.0]])
+
+    vertices = np.vstack([base_ring, shoulder_ring, tip])
+    base_idx     = list(range(0, n_seg))
+    shoulder_idx = list(range(n_seg, 2 * n_seg))
+    tip_idx      = 2 * n_seg
+
+    faces: list[list[int]] = []
+    colors: list[str]      = []
+
+    # Base cap — single n-gon, reverse winding so the outward normal points -X.
+    faces.append(list(reversed(base_idx)))
+    colors.append(_BASE_COLOR)
+
+    # Cylinder side — quad strips, halved for roll visibility.
+    half = n_seg // 2
+    for i in range(n_seg):
+        j = (i + 1) % n_seg
+        faces.append([base_idx[i], base_idx[j], shoulder_idx[j], shoulder_idx[i]])
+        colors.append(_CYL_COLOR_A if i < half else _CYL_COLOR_B)
+
+    # Conical nose — triangle fan from tip.
+    for i in range(n_seg):
+        j = (i + 1) % n_seg
+        faces.append([shoulder_idx[i], shoulder_idx[j], tip_idx])
+        colors.append(_NOSE_COLOR)
+
+    return vertices, faces, colors
 
 
 def animate(trajectory: np.ndarray) -> None:
@@ -141,12 +201,15 @@ def animate(trajectory: np.ndarray) -> None:
     Args:
         trajectory: (n_frames, 13) array of sampled state vectors.
     """
-    positions        = trajectory[:, 0:3]
-    cuboid_vertices  = _make_cuboid_vertices(BODY_LENGTH, BODY_WIDTH, BODY_HEIGHT)
-    axis_template    = np.eye(3) * 2.0   # body-fixed axes, length 2 m
+    positions = trajectory[:, 0:3]
+    rocket_vertices, rocket_faces, rocket_face_colors = _make_rocket_mesh(
+        ROCKET_DIAMETER, ROCKET_HEIGHT, ROCKET_NOSE_HEIGHT,
+        ROCKET_BASE_BELOW_COM, N_CIRCLE_SEGMENTS,
+    )
+    axis_template = np.eye(3) * (ROCKET_HEIGHT * 0.4)   # body-fixed axes
 
-    # Dynamic axis limits — pad the extremes slightly
-    max_range = np.max(np.abs(positions)) + 5.0
+    # Dynamic axis limits — pad enough that the 50 m rocket always fits.
+    max_range = np.max(np.abs(positions)) + ROCKET_HEIGHT
 
     fig = plt.figure(figsize=(12, 9))
     ax  = fig.add_subplot(111, projection="3d")
@@ -160,11 +223,11 @@ def animate(trajectory: np.ndarray) -> None:
         R     = quat_to_rotmat(quat)
 
         # Rotate and translate body vertices
-        rotated_verts = (R @ cuboid_vertices.T).T + pos
-        faces_3d      = [[rotated_verts[j] for j in face] for face in _CUBOID_FACES]
+        rotated_verts = (R @ rocket_vertices.T).T + pos
+        faces_3d      = [[rotated_verts[j] for j in face] for face in rocket_faces]
 
-        poly = Poly3DCollection(faces_3d, alpha=0.7, edgecolor="black", linewidths=1.5)
-        poly.set_facecolor(_FACE_COLORS)
+        poly = Poly3DCollection(faces_3d, alpha=0.95, edgecolor="black", linewidths=0.4)
+        poly.set_facecolor(rocket_face_colors)
         ax.add_collection3d(poly)
 
         # Body-fixed coordinate axes
@@ -200,15 +263,32 @@ def animate(trajectory: np.ndarray) -> None:
 
         return (ax,)
 
+    real_time_fps = 1.0 / (SAMPLE_RATE * STEP_SIZE)
+    interval_ms = (
+        int(1000.0 / real_time_fps) if OUTPUT_FILE else ANIMATION_INTERVAL_MS
+    )
+
     anim = FuncAnimation(  # noqa: F841  (kept alive via plt.show)
         fig, update,
         frames=len(trajectory),
-        interval=ANIMATION_INTERVAL_MS,
+        interval=interval_ms,
         blit=False,
     )
 
     plt.tight_layout()
-    plt.show()
+
+    if OUTPUT_FILE:
+        print(f"Rendering {OUTPUT_FILE} at {real_time_fps:.1f} fps (real time)…")
+        anim.save(
+            OUTPUT_FILE,
+            fps=real_time_fps,
+            dpi=120,
+            progress_callback=lambda i, n: print(f"  frame {i + 1}/{n}", flush=True)
+                                            if (i + 1) % 20 == 0 else None,
+        )
+        print(f"Saved {OUTPUT_FILE}")
+    else:
+        plt.show()
 
 
 # =============================================================================
