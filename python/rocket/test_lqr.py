@@ -20,7 +20,7 @@ F = make_F(
 jac_x = jax.jit(jax.jacfwd(F, argnums=0))
 jac_u = jax.jit(jax.jacfwd(F, argnums=1))
 xl = jnp.array([0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=jnp.float64)
-ul = jnp.array([0, 3.14/2, 20000, 0, 3.14/2, 20000, 0, 3.14/2, 20000], dtype=jnp.float64)
+ul = jnp.array([0, 0, 20000, 0, 0, 20000, 0, 0, 20000], dtype=jnp.float64)
 
 res_x = np.array(jac_x(xl, ul))
 res_u = np.array(jac_u(xl, ul))

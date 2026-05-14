@@ -119,6 +119,60 @@ def engine_spherical_to_body_force(
     ], dtype=np.float64)
 
 
+def body_force_to_spherical(
+    force: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Convert a single engine's thrust from body-frame Cartesian to spherical.
+
+    Args:
+        force: Force vector [Fx, Fy, Fz] in the body frame.
+
+    Returns:
+        Array [theta, phi, r] where theta and phi are gimbal angles (radians)
+        and r is the thrust magnitude (N).
+    """
+    fx, fy, fz = force[..., 0], force[..., 1], force[..., 2]
+    r = jnp.sqrt(fx**2 + fy**2 + fz**2)
+    phi = jnp.arctan2(jnp.sqrt(fy**2 + fz**2), fx)
+    theta = jnp.arctan2(fy, fz)
+    return jnp.stack([theta, phi, r], axis=-1)
+
+
+def compute_thrust_forces_and_moments_cartesian(
+    engine_thrust_cartesian: EnginesThrustArray,
+    a: float,
+    l: float,
+) -> BodyWrench:
+    """Compute the total force and moment from three engines given their Cartesian body forces.
+
+    Engines are arranged in an equilateral triangle at the base of the rocket.
+    Moments are taken about the centre of mass G.
+
+    Args:
+        engine_thrust_cartesian: (3, 3) array; each row is [Fx, Fy, Fz] for one engine.
+        a: Engine cluster radius — distance from rocket centreline to each engine (m).
+        l: Distance from the centre of mass to the engine plane along the X axis (m).
+
+    Returns:
+        6-element vector [Fx, Fy, Fz, Mx, My, Mz] in the body frame.
+    """
+    resultant = jnp.sum(engine_thrust_cartesian, axis=0)
+
+    # Engine attachment points in body frame (equilateral triangle)
+    GE = jnp.array([
+        [-l, a * cos(pi / 6),  -a * cos(pi / 3)],
+        [-l,  0.0,             a              ],
+        [-l,  -a * cos(pi / 6),  -a * cos(pi / 3)],
+    ], dtype=np.float64)
+
+    total_moment = sum(
+        jnp.cross(GE[i], engine_thrust_cartesian[i])
+        for i in range(3)
+    )
+
+    return jnp.concatenate((resultant, total_moment))
+
+
 def compute_thrust_forces_and_moments(
     engine_thrust: EnginesThrustArray,
     a: float,

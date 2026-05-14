@@ -1,4 +1,4 @@
-from helper import compute_thrust_forces_and_moments, quat_to_rotmat, construct_omega_matrix
+from helper import compute_thrust_forces_and_moments, quat_to_rotmat, construct_omega_matrix, body_force_to_spherical, compute_thrust_forces_and_moments_cartesian
 import numpy as np
 import time
 import jax
@@ -39,11 +39,12 @@ def make_F(
 
         Args:
             X : (13,) — [px, py, pz,  qw, qx, qy, qz,  vx, vy, vz,  wx, wy, wz]
-            U : (9,)  — [θ1, φ1, T1,  θ2, φ2, T2,  θ3, φ3, T3]
+            U : (9,)  — [X1, Y1, Z1,  X2, Y2, Z2,  X3, Y3, Z3]
         """
         pos, quat, vel, omega = X[0:3], X[3:7], X[7:10], X[10:13]
 
-        body_wrench = compute_thrust_forces_and_moments(U.reshape(3, 3), a=_a, l=_l)
+        U_cart = U.reshape(3, 3)
+        body_wrench = compute_thrust_forces_and_moments_cartesian(U_cart, a=_a, l=_l)
         R           = quat_to_rotmat(quat)
         Iw          = _I @ omega
 
@@ -55,6 +56,48 @@ def make_F(
         return jnp.concatenate([dP, dq, dv, dw])
 
     return F
+def make_lqr_computer(F, Q, R):
+    """
+    Factory that returns a fast, pre-compiled callable to compute LQR gains.
+    Ideal for embedding inside a control loop to avoid JAX recompilation overhead.
+    
+    Args:
+        F: The dynamics function callable
+        Q: The state weight matrix (13, 13)
+        R: The input weight matrix (9, 9)
+        
+    Returns:
+        compute_lqr(xl, ul) -> (K, A, B)
+    """
+    # 1. Pre-compile the jacobians exactly once (zero overhead on subsequent calls)
+    jac_x_fn = jax.jit(jax.jacfwd(F, argnums=0))
+    jac_u_fn = jax.jit(jax.jacfwd(F, argnums=1))
+    
+    # 2. Pre-process the Q and R matrices for the 12-state system once
+    Q_12 = np.delete(np.delete(np.array(Q), 3, axis=0), 3, axis=1)
+    R_np = np.array(R)
+    
+    def compute_lqr(xl, ul):
+        # Evaluate pre-compiled JIT jacobians
+        res_x = jac_x_fn(xl, ul).block_until_ready()
+        res_u = jac_u_fn(xl, ul).block_until_ready()
+        
+        A = np.array(res_x)
+        B = np.array(res_u)
+        
+        # Drop the redundant quaternion scalar part (qw at index 3) 
+        # to make the system strictly stabilizable for LQR.
+        A_12 = np.delete(np.delete(A, 3, axis=0), 3, axis=1)
+        B_12 = np.delete(B, 3, axis=0)
+        
+        K_12, S_12, E_12 = ctrl.lqr(A_12, B_12, Q_12, R_np)
+        
+        # Re-insert the zero column for qw so K is 9x13
+        K = np.insert(K_12, 3, 0.0, axis=1)
+        
+        return K, A, B
+
+    return compute_lqr
 
 
 if __name__ == "__main__":
@@ -72,45 +115,30 @@ if __name__ == "__main__":
         gravity_force=GRAVITY_FORCE,
     )
 
-    xl  = np.array([0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=np.float64)
-    ul  = np.array([0, 3.14/2, 20000, 0, 3.14/2, 20000, 0, 3.14/2, 20000],  dtype=np.float64)
+    # Create the fast LQR computer factory (do this once outside the control loop)
+    compute_lqr = make_lqr_computer(F, Q, R)
+    
+    xl = jnp.array([0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=jnp.float64)
+    ul = jnp.array([200000, 0, 0, 200000, 0, 0, 200000, 0, 0], dtype=jnp.float64)
 
-    jac_x = jax.jit(jax.jacfwd(F, argnums=0))
-    jac_u = jax.jit(jax.jacfwd(F, argnums=1))
-    xl = jnp.array([0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=jnp.float32)
-    ul = jnp.array([0, 3.14/2, 20000, 0, 3.14/2, 20000, 0, 3.14/2, 20000], dtype=jnp.float32)
+    # Warmup compilation so it isn't included in the timing
+    _ = compute_lqr(xl, ul)
 
-    # WARMUP: Trigger JIT compilation (takes a few hundred milliseconds)
-    _ = jac_x(xl, ul).block_until_ready()
-    _ = jac_u(xl, ul).block_until_ready()
-
-    # Now measure actual execution time
     start_time = time.perf_counter()
-    res_x = jac_x(xl, ul).block_until_ready()
-    res_u = jac_u(xl, ul).block_until_ready()
-    
-    # Drop the redundant quaternion scalar part (qw at index 3) 
-    # to make the system strictly stabilizable for LQR.
-    A_12 = np.delete(np.delete(np.array(res_x), 3, axis=0), 3, axis=1)
-    B_12 = np.delete(np.array(res_u), 3, axis=0)
-    Q_12 = np.delete(np.delete(Q, 3, axis=0), 3, axis=1)
-    
-    K_12, S_12, E_12 = ctrl.lqr(A_12, B_12, Q_12, R)
-    
-    # Re-insert the zero column for qw so K is 9x13
-    K = np.insert(K_12, 3, 0.0, axis=1)
+    K, A, B = compute_lqr(xl, ul)
     end_time = time.perf_counter()
-    
+    Xdot=F(xl,ul)
     total_time = end_time - start_time
     print(f"Execution time (after compilation): {total_time:.6f} seconds")
 
-    np.set_printoptions(precision=4, suppress=True, linewidth=200)
+    np.set_printoptions(precision=6, suppress=False, linewidth=200)
     
     print("\n--- Jacobian w.r.t State (A matrix) [13 x 13] ---")
-    print(np.array(res_x))
+    print(np.array(A))
     
     print("\n--- Jacobian w.r.t Controls (B matrix) [13 x 9] ---")
-    print(np.array(res_u))
+    print(np.array(B))
 
     print("\n k matrix")
     print(np.array(K))
+    print(Xdot)
