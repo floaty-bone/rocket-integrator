@@ -7,7 +7,7 @@ def rscale(A, B, C, D, K):
     Acl = A - B @ K
     Ccl = C - D @ K
     M = -Ccl @ np.linalg.inv(Acl) @ B + D
-    N = np.linalg.inv(M)
+    N = np.linalg.pinv(M)
     return N
 
 

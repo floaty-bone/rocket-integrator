@@ -1,3 +1,2 @@
-from .base import FullStateFeedback
+from .base import LQRController
 from .lqr import design_lqr, rscale
-from .body_rate_controller import BodyRateController

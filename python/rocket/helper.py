@@ -230,3 +230,98 @@ def body_frame_to_inertial_frame_force(
     """
     R = quat_to_rotmat(quaternion)
     return R @ body_force
+
+
+# ---------------------------------------------------------------------------
+# Tangent space projection and attitude controller utilities
+# ---------------------------------------------------------------------------
+
+def L(q: np.ndarray) -> np.ndarray:
+    """Left-quaternion multiplication matrix L(q) such that q1_multiply_q2 = L(q1) @ q2."""
+    q = np.asarray(q, dtype=np.float64)
+    qw, qx, qy, qz = q
+    return np.array([
+        [qw, -qx, -qy, -qz],
+        [qx,  qw, -qz,  qy],
+        [qy,  qz,  qw, -qx],
+        [qz, -qy,  qx,  qw]
+    ], dtype=np.float64)
+
+def E(q: np.ndarray, scale: float = 0.5) -> np.ndarray:
+    """Tangent space projection matrix E(q) mapping 12D tangent perturbation to 13D state perturbation."""
+    q = np.asarray(q, dtype=np.float64)
+    q_norm = q / np.linalg.norm(q)
+    qw, qx, qy, qz = q_norm
+
+    G_T = scale * np.array([
+        [-qx, -qy, -qz],
+        [ qw, -qz,  qy],
+        [ qz,  qw, -qx],
+        [-qy,  qx,  qw]
+    ], dtype=np.float64)
+
+    E_mat = np.zeros((13, 12), dtype=np.float64)
+    E_mat[0:3, 0:3] = np.eye(3)
+    E_mat[3:7, 3:6] = G_T
+    E_mat[7:10, 6:9] = np.eye(3)
+    E_mat[10:13, 9:12] = np.eye(3)
+    return E_mat
+
+def E_pinv(q: np.ndarray, scale: float = 0.5) -> np.ndarray:
+    """Left pseudoinverse of the tangent space projection matrix E(q)."""
+    q = np.asarray(q, dtype=np.float64)
+    q_norm = q / np.linalg.norm(q)
+    qw, qx, qy, qz = q_norm
+
+    G_pinv = (1.0 / scale) * np.array([
+        [-qx,  qw,  qz, -qy],
+        [-qy, -qz,  qw,  qx],
+        [-qz,  qy, -qx,  qw]
+    ], dtype=np.float64)
+
+    Ep = np.zeros((12, 13), dtype=np.float64)
+    Ep[0:3, 0:3] = np.eye(3)
+    Ep[3:6, 3:7] = G_pinv
+    Ep[6:9, 7:10] = np.eye(3)
+    Ep[9:12, 10:13] = np.eye(3)
+    return Ep
+
+def qtorp(q: np.ndarray, scale: float = 2.0) -> np.ndarray:
+    """Convert a quaternion error q to Rodrigues parameters (Gibbs vector)."""
+    q = np.asarray(q, dtype=np.float64)
+    qw = q[0]
+    qv = q[1:4]
+    
+    if qw < 0:
+        qw = -qw
+        qv = -qv
+        
+    if abs(qw) < 1e-8:
+        return scale * qv / 1e-8
+        
+    return scale * qv / qw
+
+def project_to_tangent_space(A_naive: np.ndarray, B_naive: np.ndarray, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Returns A, B correctly projected to tangent space using the pseudoinverse of E(q)."""
+    # Uses scale=0.5 and its corresponding pseudoinverse to project A and B
+    E_mat = E(q, scale=0.5)
+    Ep = E_pinv(q, scale=0.5)
+    A = Ep @ A_naive @ E_mat
+    B = Ep @ B_naive
+    return A, B
+
+def controller(x: np.ndarray, x_setpoint: np.ndarray, u_hover: np.ndarray, K: np.ndarray) -> np.ndarray:
+    """12D LQR controller using Rodrigues parameter error for attitude (scale=2.0)."""
+    q_setpoint = x_setpoint[3:7]
+    q  = x[3:7]
+
+    phi = qtorp(L(q_setpoint).T @ q, scale=2.0)
+
+    dx = np.concatenate([
+        x[0:3]  - x_setpoint[0:3],
+        phi,
+        x[7:10] - x_setpoint[7:10],
+        x[10:13] - x_setpoint[10:13],
+    ])
+
+    return u_hover - K @ dx

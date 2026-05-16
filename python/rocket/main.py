@@ -195,11 +195,14 @@ def _make_rocket_mesh(
     return vertices, faces, colors
 
 
-def animate(trajectory: np.ndarray) -> None:
+def animate(trajectory: np.ndarray, sample_rate: int = SAMPLE_RATE, step_size: float = STEP_SIZE, sim_time: float = SIM_TIME) -> None:
     """Launch the interactive 3-D animation window.
 
     Args:
         trajectory: (n_frames, 13) array of sampled state vectors.
+        sample_rate: Every Nth integration step that was saved.
+        step_size: The integration time-step used.
+        sim_time: Total simulation duration for the title.
     """
     positions = trajectory[:, 0:3]
     rocket_vertices, rocket_faces, rocket_face_colors = _make_rocket_mesh(
@@ -248,25 +251,26 @@ def animate(trajectory: np.ndarray) -> None:
         )
 
         # Axes cosmetics
-        ax.set_xlabel("X", fontsize=12)
-        ax.set_ylabel("Y", fontsize=12)
-        ax.set_zlabel("Z", fontsize=12)
+        ax.set_xlabel("X", fontsize=10)
+        ax.set_ylabel("Y", fontsize=10)
+        ax.set_zlabel("Z", fontsize=10)
         ax.set_xlim([-max_range, max_range])
         ax.set_ylim([-max_range, max_range])
         ax.set_zlim([-max_range, max_range])
 
-        time_elapsed = frame * SAMPLE_RATE * STEP_SIZE
-        ax.set_title(
-            f"Rigid Body Dynamics  |  t = {time_elapsed:.2f} s / {SIM_TIME:.1f} s",
-            fontsize=14,
+        time_elapsed = frame * sample_rate * step_size
+        # Use suptitle to avoid cropping and provide more space
+        fig.suptitle(
+            f"Rigid Body Dynamics Simulation\nt = {time_elapsed:.2f} s / {sim_time:.1f} s",
+            fontsize=14, y=0.95
         )
 
         return (ax,)
 
-    real_time_fps = 1.0 / (SAMPLE_RATE * STEP_SIZE)
-    interval_ms = (
-        int(1000.0 / real_time_fps) if OUTPUT_FILE else ANIMATION_INTERVAL_MS
-    )
+    # Calculate interval for real-time playback
+    # We subtract a small 'buffer' (e.g. 5ms) to account for Python/Matplotlib overhead
+    real_time_fps = 1.0 / (sample_rate * step_size)
+    interval_ms = max(1, int(1000.0 / real_time_fps) - 5)
 
     anim = FuncAnimation(  # noqa: F841  (kept alive via plt.show)
         fig, update,
@@ -275,7 +279,8 @@ def animate(trajectory: np.ndarray) -> None:
         blit=False,
     )
 
-    plt.tight_layout()
+    # Adjust layout to make room for the suptitle
+    plt.subplots_adjust(top=0.85)
 
     if OUTPUT_FILE:
         print(f"Rendering {OUTPUT_FILE} at {real_time_fps:.1f} fps (real time)…")

@@ -36,7 +36,7 @@ from typing import Callable
 
 import numpy as np
 
-from rocket.helper import (
+from rocket.helper_np import (
     BodyWrench,
     InertialForceVector,
     StateVector,
@@ -209,3 +209,29 @@ class RK4Integrator:
         # Weighted blend: (k1 + 2k2 + 2k3 + k4) / 6
         K = np.column_stack((k1, k2, k3, k4))   # shape (13, 4)
         return state + h * (K @ _RK4_WEIGHTS)
+
+    def normalize_state_quaternion(self, state: StateVector, inplace: bool = False) -> StateVector:
+        """Normalize the quaternion portion (indices [3:7]) of the 13-element state vector
+        to prevent numerical drift during propagation.
+
+        Args:
+            state: Current 13-element state vector [x, y, z, qw, qx, qy, qz, vx, vy, vz, wx, wy, wz].
+            inplace: If True, modifies the state vector array in-place for maximum performance
+                     (avoiding copy allocation overhead). If False, returns a new normalized copy.
+
+        Returns:
+            The normalized 13-element state vector.
+        """
+        target = state if inplace else state.copy()
+
+        # Analytical norm is 2-3x faster than np.linalg.norm for a 4-element slice
+        qw, qx, qy, qz = target[3], target[4], target[5], target[6]
+        norm_sq = qw*qw + qx*qx + qy*qy + qz*qz
+        if norm_sq > 1e-12:
+            inv_norm = 1.0 / np.sqrt(norm_sq)
+            target[3] *= inv_norm
+            target[4] *= inv_norm
+            target[5] *= inv_norm
+            target[6] *= inv_norm
+
+        return target

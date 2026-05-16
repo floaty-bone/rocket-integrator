@@ -1,9 +1,10 @@
-from helper import compute_thrust_forces_and_moments, quat_to_rotmat, construct_omega_matrix, body_force_to_spherical, compute_thrust_forces_and_moments_cartesian
+from helper import compute_thrust_forces_and_moments, quat_to_rotmat, construct_omega_matrix, body_force_to_spherical, compute_thrust_forces_and_moments_cartesian, project_to_tangent_space, E, E_pinv
 import numpy as np
 import time
 import jax
 import jax.numpy as jnp
 import control as ctrl
+
 # Enable 64-bit precision for JAX to avoid float32 truncation warnings
 jax.config.update("jax_enable_x64", True)
 
@@ -56,48 +57,44 @@ def make_F(
         return jnp.concatenate([dP, dq, dv, dw])
 
     return F
+
 def make_lqr_computer(F, Q, R):
-    """
-    Factory that returns a fast, pre-compiled callable to compute LQR gains.
-    Ideal for embedding inside a control loop to avoid JAX recompilation overhead.
-    
-    Args:
-        F: The dynamics function callable
-        Q: The state weight matrix (13, 13)
-        R: The input weight matrix (9, 9)
-        
-    Returns:
-        compute_lqr(xl, ul) -> (K, A, B)
-    """
-    # 1. Pre-compile the jacobians exactly once (zero overhead on subsequent calls)
     jac_x_fn = jax.jit(jax.jacfwd(F, argnums=0))
     jac_u_fn = jax.jit(jax.jacfwd(F, argnums=1))
-    
-    # 2. Pre-process the Q and R matrices for the 12-state system once
-    Q_12 = np.delete(np.delete(np.array(Q), 3, axis=0), 3, axis=1)
+    Q_np = np.array(Q)
     R_np = np.array(R)
-    
+
     def compute_lqr(xl, ul):
-        # Evaluate pre-compiled JIT jacobians
         res_x = jac_x_fn(xl, ul).block_until_ready()
         res_u = jac_u_fn(xl, ul).block_until_ready()
+
+        A13 = np.array(res_x)
+        B13 = np.array(res_u)
         
-        A = np.array(res_x)
-        B = np.array(res_u)
+        # Project A13, B13 to 12D tangent space using the helper utility
+        A12, B12 = project_to_tangent_space(A13, B13, xl[3:7])
         
-        # Drop the redundant quaternion scalar part (qw at index 3) 
-        # to make the system strictly stabilizable for LQR.
-        A_12 = np.delete(np.delete(A, 3, axis=0), 3, axis=1)
-        B_12 = np.delete(B, 3, axis=0)
+        # Project Q13 to 12D tangent space if it is 13x13; otherwise use Q directly
+        if Q_np.shape == (13, 13):
+            E_mat = E(xl[3:7], scale=0.5)
+            Q12 = E_mat.T @ Q_np @ E_mat
+        else:
+            Q12 = Q_np
         
-        K_12, S_12, E_12 = ctrl.lqr(A_12, B_12, Q_12, R_np)
+        # --- Solve LQR on the well-posed 12-state system ---
+        K12, S12, E12 = ctrl.lqr(A12, B12, Q12, R_np)
         
-        # Re-insert the zero column for qw so K is 9x13
-        K = np.insert(K_12, 3, 0.0, axis=1)
-        
-        return K, A, B
+        return K12, A12, B12
 
     return compute_lqr
+
+def rscale(A, B, C, D, K):
+    """Feedforward gain N such that u = N*r - K*x tracks reference r at steady state."""
+    Acl = A - B @ K
+    Ccl = C - D @ K
+    M = -Ccl @ np.linalg.inv(Acl) @ B + D
+    N = np.linalg.inv(M)
+    return N
 
 
 if __name__ == "__main__":
@@ -133,12 +130,15 @@ if __name__ == "__main__":
 
     np.set_printoptions(precision=6, suppress=False, linewidth=200)
     
-    print("\n--- Jacobian w.r.t State (A matrix) [13 x 13] ---")
+    print("\n--- Jacobian w.r.t State (A matrix) [12 x 12] ---")
     print(np.array(A))
     
-    print("\n--- Jacobian w.r.t Controls (B matrix) [13 x 9] ---")
+    print("\n--- Jacobian w.r.t Controls (B matrix) [12 x 9] ---")
     print(np.array(B))
 
     print("\n k matrix")
     print(np.array(K))
     print(Xdot)
+
+    #sanity check:
+    xset=jnp.array([0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=jnp.float64)
