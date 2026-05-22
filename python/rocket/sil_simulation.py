@@ -32,7 +32,55 @@ from rocket.integrator import RK4Integrator
 from rocket.controllers.base import LQRController
 from rocket.dynamics_function import make_F
 from rocket.helper import compute_thrust_forces_and_moments_cartesian as compute_wrench_jax
-from rocket.helper_np import compute_thrust_forces_and_moments_cartesian as compute_wrench_np
+from rocket.helper_np import (
+    compute_thrust_forces_and_moments_cartesian as compute_wrench_np,
+)
+
+# ---------------------------------------------------------------------------
+# Controller ↔ Plant boundary converters
+#
+# The LQR controller operates internally in Cartesian body-frame forces
+# [Fx, Fy, Fz] per engine.  At the interface boundary we expose the real
+# TVC command: [alpha, beta, T] per engine — two orthogonal Euler-style
+# gimbal angles plus thrust magnitude.  This matches the physical U-joint
+# TVC mechanism (two orthogonal pivots).  The sub-TVC servo is assumed
+# instantaneous (infinite bandwidth).
+#
+# Convention (rotation about body Y by α, then about body Z by β):
+#     fx =  T · cos(α) · cos(β)
+#     fy =  T · cos(α) · sin(β)
+#     fz = -T · sin(α)
+#
+# Equilibrium: α=β=0, T along body +X. Bijective on α∈(-π/2, π/2), β∈(-π, π],
+# T > 0. Singular only at α=±π/2 (thrust perpendicular to body X) — outside
+# any realistic operating range.
+# ---------------------------------------------------------------------------
+
+def _engine_cart_to_euler(force: np.ndarray) -> np.ndarray:
+    fx, fy, fz = force[0], force[1], force[2]
+    T = np.sqrt(fx*fx + fy*fy + fz*fz)
+    if T < 1e-9:
+        return np.array([0.0, 0.0, 0.0], dtype=np.float64)
+    alpha = -np.arcsin(np.clip(fz / T, -1.0, 1.0))
+    beta  = np.arctan2(fy, fx)
+    return np.array([alpha, beta, T], dtype=np.float64)
+
+def _engine_euler_to_cart(gimbal: np.ndarray) -> np.ndarray:
+    alpha, beta, T = gimbal[0], gimbal[1], gimbal[2]
+    ca, sa = np.cos(alpha), np.sin(alpha)
+    cb, sb = np.cos(beta),  np.sin(beta)
+    return np.array([T*ca*cb, T*ca*sb, -T*sa], dtype=np.float64)
+
+def cart9_to_gimbal9(u_cart: np.ndarray) -> np.ndarray:
+    """Convert 9-elem Cartesian force vector to 9-elem [alpha, beta, T] per engine."""
+    u_3x3 = u_cart.reshape(3, 3)
+    return np.concatenate([_engine_cart_to_euler(u_3x3[i]) for i in range(3)])
+
+def gimbal9_to_cart9(u_gimbal: np.ndarray) -> np.ndarray:
+    """Convert 9-elem [alpha, beta, T] per engine to 9-elem Cartesian force vector."""
+    u_3x3 = u_gimbal.reshape(3, 3)
+    return np.concatenate([_engine_euler_to_cart(u_3x3[i]) for i in range(3)])
+
 
 def run_sil_simulation():
     # =========================================================================
@@ -67,7 +115,7 @@ def run_sil_simulation():
     # that it brakes before the rocket reaches the target. 10x is the geometric midpoint
     # on the log scale between the two failure modes.
     Q_diag = np.array([
-        1e6, 1e6, 1e6,      # Position (x, y, z)
+        1e7, 1e7, 1e7,      # Position (x, y, z)
         1e2, 1e2, 1e2, 1e2, # Orientation (qw, qx, qy, qz)
         1e5, 1e5, 1e5,      # Velocity (vx, vy, vz) — 10x position = near-critical damping
         1e1, 1e1, 1e1,      # Angular velocity (wx, wy, wz)
@@ -89,18 +137,22 @@ def run_sil_simulation():
     qy = math.sin(theta / 2)
 
     # state: [px, py, pz,  qw, qx, qy, qz,  vx, vy, vz,  wx, wy, wz]
-    initial_state = np.array([-200.0, 0.0, 200.0,  qw, 0.0, qy, 0.0,  0.0, 0.0, -25.0,  0.0, 0.0, 0.0], dtype=np.float64)
-    setpoint      = np.array([0.0, 0.0, 0.0, qw, 0.0, qy, 0.0,  0.0, 0.0, 0.0,  0.0, 0.0, 0.0], dtype=np.float64)
+    initial_state = np.array([0.0, 0.0, 0.0,  qw, 0.0, qy, 0.0,  0.0, 0.0, 0.0,  0.0, 0.0, 0.0], dtype=np.float64)
+    setpoint      = np.array([50.0, 100.0, 60.0, qw, 0.0, qy, 0.0,  0.0, 0.0, 0.0,  0.0, 0.0, 0.0], dtype=np.float64)
 
     # Nominal thrust: Hover thrust to counteract gravity
     # Total weight = 120,000kg * 9.8m/s^2 = 1,176,000 N
     # Per engine (3 engines) = 392,000 N along body +X axis
     hover_thrust = (VEHICLE_MASS * 9.8) / 3.0
-    u_nominal = np.array([hover_thrust, 0, 0, hover_thrust, 0, 0, hover_thrust, 0, 0], dtype=np.float64)
+    # Internal Cartesian format used by LQR dynamics model
+    u_nominal_cart = np.array([hover_thrust, 0, 0, hover_thrust, 0, 0, hover_thrust, 0, 0], dtype=np.float64)
+    # Gimbal format [alpha, beta, T] per engine — the real TVC command interface
+    # At hover: zero gimbal angles, full thrust along body +X → alpha=0, beta=0, T=hover_thrust
+    u_nominal_gimbal = cart9_to_gimbal9(u_nominal_cart)
 
-    # Warmup / Initial linearization
+    # Warmup / Initial linearization (always in Cartesian for the LQR dynamics model)
     print("Performing initial linearization (this may take a few seconds to compile JAX graph)...", flush=True)
-    controller.update_linearization(jnp.array(initial_state), jnp.array(u_nominal))
+    controller.update_linearization(jnp.array(initial_state), jnp.array(u_nominal_cart))
 
     # =========================================================================
     # 5. Setup Integrator and Simulation Loop
@@ -110,11 +162,11 @@ def run_sil_simulation():
     n_frames = n_steps // SAMPLE_RATE + 1
 
     trajectory = np.empty((n_frames, 13), dtype=np.float64)
+    u_history = np.empty((n_frames, 9), dtype=np.float64)
     
-    # We need a mutable reference to the current body wrench for the RK4Integrator callback
-    # Initial wrench is just the nominal hover thrust.
-    u_cart_initial = u_nominal.reshape(3, 3)
-    current_body_wrench = compute_wrench_np(u_cart_initial, a, l)
+    # We need a mutable reference to the current body wrench for the RK4Integrator callback.
+    # Initial wrench is the nominal hover thrust (gimbal nominal → Cartesian → wrench).
+    current_body_wrench = compute_wrench_np(gimbal9_to_cart9(u_nominal_gimbal).reshape(3, 3), a, l)
 
     def get_body_wrench():
         return current_body_wrench
@@ -131,7 +183,8 @@ def run_sil_simulation():
 
     state = initial_state.copy()
     trajectory[0] = state
-    u = u_nominal.copy()  # last computed control; used for gain-scheduled linearization
+    u_gimbal = u_nominal_gimbal.copy()  # last command in gimbal format [alpha, beta, T] × 3
+    u_history[0] = u_gimbal
 
     print(f"\nRunning SIL simulation for {SIM_TIME}s...", flush=True)
     start_time = time.time()
@@ -139,35 +192,53 @@ def run_sil_simulation():
     frame_idx = 1
     report_every = n_steps // 10
     
+    # =========================================================================
+    # CONTROLLER BLOCK
+    #   IN  : state [13]  — [pos(3), quat(4), vel(3), omega(3)]
+    #   OUT : u_gimbal [9] — [alpha, beta, T] per engine  ← SIL boundary
+    # =========================================================================
+    def controller_block(state: np.ndarray, u_gimbal_prev: np.ndarray, step_idx: int) -> np.ndarray:
+        """Run the LQR and return TVC commands [α, β, T] × 3 engines."""
+        if step_idx % lin_steps == 0:
+            controller.update_linearization(jnp.array(state), jnp.array(gimbal9_to_cart9(u_gimbal_prev)))
+        u_cart = controller.update(state, setpoint=setpoint, u_nominal=u_nominal_cart)
+        return cart9_to_gimbal9(u_cart)  # → [α, β, T] × 3  (SIL output)
+
+    # =========================================================================
+    # PLANT / SIMULATION BLOCK
+    #   IN  : u_gimbal [9] — [alpha, beta, T] per engine  ← SIL boundary
+    #   INTERNAL: converts gimbal → wrench → integrates dynamics
+    # =========================================================================
+    def plant_block(u_gimbal: np.ndarray) -> None:
+        """Accept TVC commands [α, β, T] × 3 and update the shared body wrench."""
+        nonlocal current_body_wrench
+        current_body_wrench = compute_wrench_np(gimbal9_to_cart9(u_gimbal).reshape(3, 3), a, l)
+
     t_next_control = 0.0
     control_period = 1.0 / CONTROL_FREQ
     control_count = 0
 
     for step_idx in range(1, n_steps):
         t = step_idx * STEP_SIZE
-        
-        # 1. 10Hz Linearization update (TEMPORARILY DISABLED)
-        # if step_idx % lin_steps == 0:
-        #     # Gain scheduling: linearize around the actual current (state, u) operating point,
-        #     # not u_nominal. The rocket's true input drifts from hover as it translates,
-        #     # so using the last computed u gives a much more accurate local linear model.
-        #     controller.update_linearization(jnp.array(state), jnp.array(u))
-            
-        # 2. Control update (runs at CONTROL_FREQ)
+
+        # ── CONTROLLER BLOCK (runs at CONTROL_FREQ) ──────────────────────────
         if t >= t_next_control:
-            u = controller.update(state, setpoint=setpoint, u_nominal=u_nominal)
-            # Update the body wrench for the integrator (using fast NumPy version)
-            u_cart = u.reshape(3, 3)
-            current_body_wrench = compute_wrench_np(u_cart, a, l)
+            u_gimbal = controller_block(state, u_gimbal, step_idx)   # OUT: [α, β, T] × 3
+
+            # ── SIL BOUNDARY: [α, β, T] per engine handed to plant ───────────
+            plant_block(u_gimbal)                          # IN : [α, β, T] × 3
+            # ─────────────────────────────────────────────────────────────────
+
             t_next_control += control_period
             control_count += 1
-        
-        # 3. Integration step (runs at SIM_FREQ)
+
+        # ── PLANT BLOCK: integration step (runs at SIM_FREQ) ─────────────────
         state = integrator.step_forward(state)
         
         # 4. Record state for animation
         if step_idx % SAMPLE_RATE == 0 and frame_idx < n_frames:
             trajectory[frame_idx] = state
+            u_history[frame_idx] = u_gimbal
             frame_idx += 1
             
         # 5. Progress reporting
@@ -186,7 +257,44 @@ def run_sil_simulation():
     q_final = state[3:7]
     print(f"Final Quaternion Norm: {np.linalg.norm(q_final):.8f} (should be ≈ 1)")
     
-    return trajectory[:frame_idx], STEP_SIZE, SAMPLE_RATE, SIM_TIME, setpoint
+    return trajectory[:frame_idx], u_history[:frame_idx], STEP_SIZE, SAMPLE_RATE, SIM_TIME, setpoint
+
+def plot_thrust(u_history, step_size, sample_rate, total_sim_time):
+    """Plot gimbal angles (alpha, beta) and thrust magnitude T for each of the 3 engines."""
+    times = np.arange(len(u_history)) * step_size * sample_rate
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+
+    for i, ax in enumerate(axes):
+        alpha = np.degrees(u_history[:, i*3])      # pitch about body Y (deg)
+        beta  = np.degrees(u_history[:, i*3 + 1])  # yaw   about body Z (deg)
+        T     = u_history[:, i*3 + 2] / 1e3        # thrust magnitude   (kN)
+
+        print(f"Engine {i+1}: α range [{alpha.min():+.3f}, {alpha.max():+.3f}] deg,  "
+              f"β range [{beta.min():+.3f}, {beta.max():+.3f}] deg,  "
+              f"T range [{T.min():.1f}, {T.max():.1f}] kN")
+
+        ax2 = ax.twinx()
+        # Plot β first (underneath) and α on top with a dashed style + markers so it
+        # stays visible even if α and β overlap or have very different magnitudes.
+        ax.plot(times, beta,  label="β yaw   (deg)",  color='#3498db', linewidth=2, zorder=2)
+        ax.plot(times, alpha, label="α pitch (deg)",  color='#e74c3c', linewidth=2.5, linestyle='--', zorder=3)
+        ax2.plot(times, T,    label="T thrust (kN)",  color='#2ecc71', linewidth=2, linestyle=':',  zorder=1)
+
+        ax.set_ylabel("Gimbal angle (deg)", fontsize=11)
+        ax2.set_ylabel("Thrust (kN)", fontsize=11)
+        ax.set_title(f"Engine {i+1} TVC Command", fontsize=12)
+        ax.grid(True, linestyle=":", alpha=0.6)
+
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, frameon=True, loc="upper right")
+
+    fig.suptitle("Engine TVC Commands: Gimbal Angles (α=pitch, β=yaw) & Thrust", fontsize=14)
+    axes[2].set_xlabel("Time (s)", fontsize=12)
+    
+    plt.xlim(0, total_sim_time)
+    plt.tight_layout()
 
 def plot_trajectory_tracking(trajectory, step_size, sample_rate, total_sim_time, setpoint):
     """Plot X, Y, and Z positions of the center of mass against time."""
@@ -217,10 +325,11 @@ def plot_trajectory_tracking(trajectory, step_size, sample_rate, total_sim_time,
     # Note: plt.show() is not called here; it will be called by animate() or at the end of main.
 
 if __name__ == "__main__":
-    trajectory, dt, sample, sim_time, setpoint = run_sil_simulation()
+    trajectory, u_history, dt, sample, sim_time, setpoint = run_sil_simulation()
     
     print("Generating plots...", flush=True)
     plot_trajectory_tracking(trajectory, dt, sample, sim_time, setpoint)
+    plot_thrust(u_history, dt, sample, sim_time)
     
     print("Launching animation...", flush=True)
     from rocket.main import animate

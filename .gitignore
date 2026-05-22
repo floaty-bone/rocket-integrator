@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Node
+node_modules/
+
 # C++ build artifacts
 cpp/build/
 cpp/**/*.o

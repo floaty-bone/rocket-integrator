@@ -80,6 +80,9 @@ def make_lqr_computer(F, Q, R):
             Q12 = E_mat.T @ Q_np @ E_mat
         else:
             Q12 = Q_np
+            
+        # Ensure Q12 is perfectly symmetric to avoid control library strict checks
+        Q12 = (Q12 + Q12.T) / 2.0
         
         # --- Solve LQR on the well-posed 12-state system ---
         K12, S12, E12 = ctrl.lqr(A12, B12, Q12, R_np)
