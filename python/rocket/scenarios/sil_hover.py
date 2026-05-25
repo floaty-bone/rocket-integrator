@@ -42,9 +42,9 @@ from rocket.viz.plots import plot_thrust, plot_trajectory_tracking
 # CONFIG
 # =============================================================================
 SIM_TIME           = 30.0
-SIM_FREQ           = 5000   # Hz
-CONTROL_FREQ       = 1000   # Hz
-LINEARIZATION_RATE = 10     # Hz
+SIM_FREQ           = 8000   # Hz
+CONTROL_FREQ       = 5000   # Hz
+LINEARIZATION_RATE = 30     # Hz
 STEP_SIZE          = 1.0 / SIM_FREQ
 SAMPLE_RATE        = int(SIM_FREQ / 50)  # record at 50 Hz
 
@@ -101,7 +101,7 @@ def _make_controller():
         a=ENGINE_CLUSTER_RADIUS,
         l=COM_TO_ENGINE_PLANE,
     )
-    Q = np.diag([3e6, 3e6, 6e6, 1e2, 1e2, 1e2, 1e5, 1e5, 1e5, 1e1, 1e1, 1e1])
+    Q = np.diag([1e7, 1e7, 1e7, 1e2, 1e2, 1e2, 1e8, 1e8, 2.3e8, 1, 1, 1])
     R = np.eye(9)
     return LQRController(F, Q=Q, R=R)
 
@@ -109,8 +109,8 @@ def _make_controller():
 def _make_initial_conditions():
     theta = -math.pi / 2
     qw, qy = math.cos(theta / 2), math.sin(theta / 2)
-    initial_state = np.array([40.0, 40.0, 200.0, qw, 0.0, qy, 0.0, 0.0, 0.0, -10.0, 0.0, 0.0, 0.0])
-    setpoint      = np.array([0.0, 0.0, 40.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    initial_state = np.array([60.0, 60.0, 500.0, qw, 0.0, qy, 0.0, 0.0, 0.0, -61.0, 0.0, 0.0, 0.0])
+    setpoint      = np.array([0.0, 0.0, 50.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     hover         = hover_thrust_per_engine()
     u_nominal_cart = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
     return initial_state, setpoint, u_nominal_cart
@@ -228,7 +228,7 @@ def main() -> None:
     plot_thrust(u_history, dt, sample, sim_time)
 
     print("Starting WebSocket server...", flush=True)
-    asyncio.run(serve_trajectory(trajectory, u_history, dt, sample))
+    asyncio.run(serve_trajectory(trajectory, u_history, dt, sample, setpoint=setpoint))
 
 
 if __name__ == "__main__":

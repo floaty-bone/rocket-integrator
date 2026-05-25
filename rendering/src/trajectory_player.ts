@@ -5,15 +5,16 @@ interface SimMeta {
   n_frames: number;
   dt: number;
   total_time: number;
+  setpoint: [number, number, number];
 }
 
 interface SimFrame {
   type: "frame";
   i: number;
   t: number;
-  pos: [number, number, number];    // meters, sim inertial (Z-up)
-  quat: [number, number, number, number]; // [w, x, y, z] body→inertial
-  engines: [[number, number], [number, number], [number, number]]; // [[α0,β0], [α1,β1], [α2,β2]] radians
+  pos:     [number, number, number];    // meters, sim inertial (Z-up)
+  quat:    [number, number, number, number]; // [w, x, y, z] body→inertial
+  engines: [[number, number, number], [number, number, number], [number, number, number]]; // [[α,β,T]×3] rad,rad,N
 }
 
 export class TrajectoryPlayer {
@@ -23,6 +24,10 @@ export class TrajectoryPlayer {
   private readonly initialPos: THREE.Vector3;
   private readonly statusEl: HTMLElement;
 
+  onMeta?:     (totalTime: number, setpoint: [number, number, number]) => void;
+  onFrame?:    (t: number, pos: [number, number, number], engines: [number, number, number][]) => void;
+  onComplete?: () => void;
+
   private ws: WebSocket | null = null;
   private meta: SimMeta | null = null;
   private frameA: SimFrame | null = null;
@@ -31,12 +36,10 @@ export class TrajectoryPlayer {
 
   // Coordinate frame change: sim inertial (Z-up) → Three.js world (Y-up)
   // C = Rx(-π/2): maps sim-Z to three-Y and sim-Y to three-(-Z)
-  // As quaternion [w, x, y, z]: C = [√2/2, -√2/2, 0, 0]
-  // THREE.Quaternion constructor takes (x, y, z, w)
   private readonly _C    = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
   private readonly _Cinv = new THREE.Quaternion( Math.SQRT1_2, 0, 0, Math.SQRT1_2);
 
-  // Reusable scratch objects — never cross method boundaries
+  // Reusable scratch objects
   private readonly _qa   = new THREE.Quaternion();
   private readonly _qb   = new THREE.Quaternion();
   private readonly _qtmp = new THREE.Quaternion();
@@ -47,46 +50,48 @@ export class TrajectoryPlayer {
   private readonly _axX  = new THREE.Vector3(1, 0, 0);
   private readonly _axY  = new THREE.Vector3(0, 1, 0);
 
+  // CoM trail
+  private readonly _scene: THREE.Scene;
+  private _trailLine:  THREE.Line | null = null;
+  private _trailBuf:   Float32Array | null = null;
+  private _trailCount  = 0;
+  private static readonly TRAIL_MAX = 4000;
+
   constructor(
     booster: THREE.Object3D,
     gimbalPivots: (THREE.Group | null)[],
     gimbalBaseQuat: THREE.Quaternion[],
+    scene: THREE.Scene,
   ) {
-    this.booster       = booster;
-    this.gimbalPivots  = gimbalPivots;
+    this.booster        = booster;
+    this.gimbalPivots   = gimbalPivots;
     this.gimbalBaseQuat = gimbalBaseQuat;
-    this.initialPos    = booster.position.clone();
-    this.statusEl      = this._makeStatusEl();
+    this.initialPos     = booster.position.clone();
+    this.statusEl       = this._makeStatusEl();
+    this._scene         = scene;
   }
 
   connect(url = "ws://localhost:8765"): void {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    this.meta    = null;
-    this.frameA  = null;
-    this.frameB  = null;
+    if (this.ws) { this.ws.close(); this.ws = null; }
+    this.meta   = null;
+    this.frameA = null;
+    this.frameB = null;
+    this._initTrail();
 
     this._setStatus("Connecting to simulation…");
-
     this.ws = new WebSocket(url);
 
-    this.ws.onopen = () => {
-      this._setStatus("Connected — waiting for first frame…");
-    };
-
+    this.ws.onopen    = () => { this._setStatus("Connected — waiting for first frame…"); };
     this.ws.onmessage = (evt: MessageEvent) => {
       this._onMessage(JSON.parse(evt.data) as SimMeta | SimFrame);
     };
-
-    this.ws.onerror = () => {
+    this.ws.onerror   = () => {
       this._setStatus("Connection failed — is `python -m rocket.scenarios.sil_hover` running?", 6000);
     };
-
-    this.ws.onclose = () => {
+    this.ws.onclose   = () => {
       if (this.meta) {
         this._setStatus(`Simulation complete  (${this.meta.total_time.toFixed(1)} s)`, 4000);
+        this.onComplete?.();
       }
       this.ws = null;
     };
@@ -96,18 +101,26 @@ export class TrajectoryPlayer {
     this.ws?.close();
     this.ws = null;
     this._restoreBooster();
+    if (this._trailLine) {
+      this._scene.remove(this._trailLine);
+      this._trailLine.geometry.dispose();
+      this._trailLine = null;
+    }
     this.statusEl.style.display = "none";
   }
 
   /** Call once per render frame from the main animation loop. */
   tick(): void {
     if (!this.frameA || !this.frameB || !this.meta) return;
-
-    const elapsed = (performance.now() - this.startWallTime) / 1000;
-    const dt      = this.meta.dt;
-    const alpha   = Math.min(1, Math.max(0, (elapsed - this.frameA.t) / dt));
-
-    this._applyFrame(this.frameA, this.frameB, alpha);
+    try {
+      const elapsed = (performance.now() - this.startWallTime) / 1000;
+      const dt      = this.meta.dt;
+      const alpha   = Math.min(1, Math.max(0, (elapsed - this.frameA.t) / dt));
+      this._applyFrame(this.frameA, this.frameB, alpha);
+      this._appendTrail();
+    } catch (e) {
+      console.error("TrajectoryPlayer.tick error:", e);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -116,16 +129,16 @@ export class TrajectoryPlayer {
     if (msg.type === "meta") {
       this.meta          = msg as SimMeta;
       this.startWallTime = performance.now();
+      this.onMeta?.(this.meta.total_time, this.meta.setpoint);
       return;
     }
 
     const frame = msg as SimFrame;
     this.frameA = this.frameB;
     this.frameB = frame;
+    if (!this.frameA) this.frameA = frame;
 
-    if (!this.frameA) {
-      this.frameA = frame; // first frame — set both so tick() has something to work with
-    }
+    this.onFrame?.(frame.t, frame.pos, frame.engines);
 
     if (this.meta) {
       this._setStatus(`Sim  t = ${frame.t.toFixed(2)} s / ${this.meta.total_time.toFixed(1)} s`);
@@ -133,59 +146,82 @@ export class TrajectoryPlayer {
   }
 
   private _applyFrame(a: SimFrame, b: SimFrame, alpha: number): void {
-    const RAD2DEG = 180 / Math.PI;
-
-    // --- position (lerp) ---
     this._simPosToThree(a.pos, this._pa);
     this._simPosToThree(b.pos, this._pb);
     this.booster.position.lerpVectors(this._pa, this._pb, alpha);
 
-    // --- quaternion (slerp) ---
     this._simQuatToThree(a.quat, this._qa);
     this._simQuatToThree(b.quat, this._qb);
     this.booster.quaternion.slerpQuaternions(this._qa, this._qb, alpha);
 
-    // --- engine gimbals (lerp angles) ---
     for (let i = 0; i < 3; i++) {
       const pivot = this.gimbalPivots[i];
       if (!pivot) continue;
-
-      const alphaA = a.engines[i][0] * RAD2DEG;
-      const betaA  = a.engines[i][1] * RAD2DEG;
-      const alphaB = b.engines[i][0] * RAD2DEG;
-      const betaB  = b.engines[i][1] * RAD2DEG;
-
-      const al = (alphaA + (alphaB - alphaA) * alpha) * (Math.PI / 180);
-      const be = (betaA  + (betaB  - betaA)  * alpha) * (Math.PI / 180);
-
+      const al = -(a.engines[i][1] + (b.engines[i][1] - a.engines[i][1]) * alpha);
+      const be = -(a.engines[i][0] + (b.engines[i][0] - a.engines[i][0]) * alpha);
       this._qx.setFromAxisAngle(this._axX, al);
       this._qy.setFromAxisAngle(this._axY, be);
       pivot.quaternion.copy(this.gimbalBaseQuat[i]).multiply(this._qx).multiply(this._qy);
     }
   }
 
-  /** sim inertial pos [x,y,z] (m, Z-up) → Three.js world pos (mm, Y-up) */
   private _simPosToThree(pos: [number, number, number], out: THREE.Vector3): void {
     out.set(
       this.initialPos.x + pos[0] * 1000,
-      this.initialPos.y + pos[2] * 1000,   // sim Z (up) → three Y (up)
-      this.initialPos.z - pos[1] * 1000,   // sim Y → three -Z
+      this.initialPos.y + pos[2] * 1000,
+      this.initialPos.z - pos[1] * 1000,
     );
   }
 
-  /** sim quat [w,x,y,z] (body→inertial Z-up) → Three.js quat (body→world Y-up) */
   private _simQuatToThree(q: [number, number, number, number], out: THREE.Quaternion): void {
-    // THREE.Quaternion constructor order: (x, y, z, w)
     out.set(q[1], q[2], q[3], q[0]);
-    // q_three = C * q_sim * C^-1
     this._qtmp.copy(this._C).multiply(out).multiply(this._Cinv);
     out.copy(this._qtmp);
   }
 
+  private _initTrail(): void {
+    if (this._trailLine) {
+      this._scene.remove(this._trailLine);
+      this._trailLine.geometry.dispose();
+      this._trailLine = null;
+    }
+    const max = TrajectoryPlayer.TRAIL_MAX;
+    this._trailBuf   = new Float32Array(max * 3);
+    this._trailCount = 0;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(this._trailBuf, 3));
+    geo.setDrawRange(0, 0);
+
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x00d4ff,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false,
+    });
+    this._trailLine = new THREE.Line(geo, mat);
+    this._trailLine.frustumCulled = false;
+    this._scene.add(this._trailLine);
+  }
+
+  private _appendTrail(): void {
+    if (!this._trailLine || !this._trailBuf) return;
+    if (this._trailCount >= TrajectoryPlayer.TRAIL_MAX) return;
+
+    const p   = this.booster.position;
+    const idx = this._trailCount * 3;
+    this._trailBuf[idx]     = p.x;
+    this._trailBuf[idx + 1] = p.y;
+    this._trailBuf[idx + 2] = p.z;
+    this._trailCount++;
+
+    const attr = this._trailLine.geometry.getAttribute("position") as THREE.BufferAttribute;
+    attr.needsUpdate = true;
+    this._trailLine.geometry.setDrawRange(0, this._trailCount);
+  }
+
   private _restoreBooster(): void {
     this.booster.position.copy(this.initialPos);
-    // Restore the nominal Three.js orientation: rotation.z = π/2
-    // = THREE.Quaternion(x=0, y=0, z=√2/2, w=√2/2)
     this.booster.quaternion.set(0, 0, Math.SQRT1_2, Math.SQRT1_2);
     for (let i = 0; i < 3; i++) {
       const p = this.gimbalPivots[i];

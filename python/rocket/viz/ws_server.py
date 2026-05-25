@@ -18,6 +18,7 @@ async def serve_trajectory(
     u_history: np.ndarray,
     step_size: float,
     sample_rate: int,
+    setpoint: np.ndarray | None = None,
     host: str = "localhost",
     port: int = 8765,
 ) -> None:
@@ -41,8 +42,19 @@ async def serve_trajectory(
         addr = getattr(websocket, "remote_address", "?")
         print(f"  Client connected: {addr}", flush=True)
 
-        meta = {"type": "meta", "n_frames": n_frames, "dt": round(dt, 6), "total_time": total_time}
+        sp = setpoint[:3].tolist() if setpoint is not None else [0.0, 0.0, 0.0]
+        meta = {
+            "type": "meta",
+            "n_frames": n_frames,
+            "dt": round(dt, 6),
+            "total_time": total_time,
+            "setpoint": [round(float(v), 4) for v in sp],
+        }
         await websocket.send(json.dumps(meta))
+
+        # Sanity-check first frame thrust so misconfigured sims surface quickly.
+        u0 = u_history[0]
+        print(f"  First-frame thrust values: {float(u0[2]):.1f}  {float(u0[5]):.1f}  {float(u0[8]):.1f} N", flush=True)
 
         loop = asyncio.get_event_loop()
         start = loop.time()
@@ -57,11 +69,11 @@ async def serve_trajectory(
                 "pos":  [round(float(state[0]), 5), round(float(state[1]), 5), round(float(state[2]), 5)],
                 "quat": [round(float(state[3]), 7), round(float(state[4]), 7),
                          round(float(state[5]), 7), round(float(state[6]), 7)],
-                # engines: [[α0, β0], [α1, β1], [α2, β2]] in radians
+                # engines: [[α0, β0, T0], [α1, β1, T1], [α2, β2, T2]] — rad, rad, N
                 "engines": [
-                    [round(float(u[0]), 6), round(float(u[1]), 6)],
-                    [round(float(u[3]), 6), round(float(u[4]), 6)],
-                    [round(float(u[6]), 6), round(float(u[7]), 6)],
+                    [round(float(u[0]), 6), round(float(u[1]), 6), round(float(u[2]), 1)],
+                    [round(float(u[3]), 6), round(float(u[4]), 6), round(float(u[5]), 1)],
+                    [round(float(u[6]), 6), round(float(u[7]), 6), round(float(u[8]), 1)],
                 ],
             }
             await websocket.send(json.dumps(frame))

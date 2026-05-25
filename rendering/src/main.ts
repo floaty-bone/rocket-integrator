@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { startTrajectoryAnimation } from "./trajectory.js";
 import { TrajectoryPlayer } from "./trajectory_player.js";
+import { LivePlots } from "./live_plots.js";
 import {
   BOOSTER,
   STAGE0,
@@ -121,6 +122,7 @@ let boosterModel: THREE.Object3D | null = null;
 const gimbalPivots: (THREE.Group | null)[]     = [null, null, null];
 const gimbalBaseQuat: THREE.Quaternion[]        = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
 let trajectoryPlayer: TrajectoryPlayer | null   = null;
+const livePlots = new LivePlots();
 
 let leftChopstick: THREE.Object3D | null = null;
 let rightChopstick: THREE.Object3D | null = null;
@@ -359,7 +361,9 @@ loader.load(
 
     const comOffset = center.clone().sub(model.position);
 
-    trajectoryPlayer = new TrajectoryPlayer(model, gimbalPivots, gimbalBaseQuat);
+    trajectoryPlayer = new TrajectoryPlayer(model, gimbalPivots, gimbalBaseQuat, scene);
+    trajectoryPlayer.onMeta     = (total, sp) => livePlots.setMeta(total, sp);
+    trajectoryPlayer.onFrame    = (t, pos, eng) => livePlots.addFrame(t, pos, eng);
 
     window.addEventListener("keydown", (e) => {
       if (e.key === "t" || e.key === "T") {
@@ -513,7 +517,9 @@ function buildControlPanel(
     padding:14px 22px; display:flex; flex-direction:column; gap:6px; min-width:380px;
   `;
 
-  let collapsed = false;
+  let collapsed = true;
+  panel.style.display = "none";
+  chevron.style.transform = "rotate(180deg)";
   titleBar.addEventListener("click", () => {
     collapsed = !collapsed;
     panel.style.display = collapsed ? "none" : "flex";
@@ -703,7 +709,9 @@ function buildControlPanel(
     padding:14px 22px; display:flex; flex-direction:column; gap:8px; min-width:320px;
   `;
 
-  let posCollapsed = false;
+  let posCollapsed = true;
+  posPanel.style.display = "none";
+  posChevron.style.transform = "rotate(180deg)";
   posTitleBar.addEventListener("click", () => {
     posCollapsed = !posCollapsed;
     posPanel.style.display = posCollapsed ? "none" : "flex";
@@ -891,6 +899,7 @@ function animate() {
   controls.update();
   if ((window as any).__tickPosAnims) (window as any).__tickPosAnims();
   trajectoryPlayer?.tick();
+  livePlots.render();
   tickChopstick(leftChopstick, leftChopstickBaseQ, leftChopAngleDeg, leftOsc, leftOscX, 1, -8, 60);
   tickChopstick(rightChopstick, rightChopstickBaseQ, rightChopAngleDeg, rightOsc, rightOscX, -1, -60, 8);
   tickTransOscillation(connTransOsc, chopConnector);
