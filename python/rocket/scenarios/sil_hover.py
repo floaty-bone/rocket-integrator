@@ -35,7 +35,6 @@ from rocket.plant.dynamics import make_F
 from rocket.plant.thrust import compute_thrust_forces_and_moments_cartesian_np as compute_wrench_np
 from rocket.plant.tvc import cart9_to_gimbal9, gimbal9_to_cart9
 from rocket.integration.integrator import RK4Integrator
-from rocket.viz.animation import animate
 from rocket.viz.plots import plot_thrust, plot_trajectory_tracking
 
 
@@ -47,7 +46,7 @@ SIM_FREQ           = 5000   # Hz
 CONTROL_FREQ       = 1000   # Hz
 LINEARIZATION_RATE = 10     # Hz
 STEP_SIZE          = 1.0 / SIM_FREQ
-SAMPLE_RATE        = int(SIM_FREQ / 5)  # record at 5 Hz
+SAMPLE_RATE        = int(SIM_FREQ / 50)  # record at 50 Hz
 
 
 # =============================================================================
@@ -110,8 +109,8 @@ def _make_controller():
 def _make_initial_conditions():
     theta = -math.pi / 2
     qw, qy = math.cos(theta / 2), math.sin(theta / 2)
-    initial_state = np.array([0.0, 0.0, 0.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    setpoint      = np.array([50.0, 100.0, 60.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    initial_state = np.array([40.0, 40.0, 200.0, qw, 0.0, qy, 0.0, 0.0, 0.0, -10.0, 0.0, 0.0, 0.0])
+    setpoint      = np.array([0.0, 0.0, 40.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     hover         = hover_thrust_per_engine()
     u_nominal_cart = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
     return initial_state, setpoint, u_nominal_cart
@@ -219,14 +218,17 @@ def run_sil_simulation():
 
 
 def main() -> None:
+    import asyncio
+    from rocket.viz.ws_server import serve_trajectory
+
     trajectory, u_history, dt, sample, sim_time, setpoint = run_sil_simulation()
 
     print("Generating plots...", flush=True)
     plot_trajectory_tracking(trajectory, dt, sample, sim_time, setpoint)
     plot_thrust(u_history, dt, sample, sim_time)
 
-    print("Launching animation...", flush=True)
-    animate(trajectory, sample_rate=sample, step_size=dt, sim_time=sim_time)
+    print("Starting WebSocket server...", flush=True)
+    asyncio.run(serve_trajectory(trajectory, u_history, dt, sample))
 
 
 if __name__ == "__main__":

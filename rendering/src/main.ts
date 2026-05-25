@@ -3,6 +3,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { startTrajectoryAnimation } from "./trajectory.js";
+import { TrajectoryPlayer } from "./trajectory_player.js";
 import {
   BOOSTER,
   STAGE0,
@@ -116,6 +117,10 @@ const loader = new GLTFLoader();
 
 let stage0Model: THREE.Object3D | null = null;
 let boosterModel: THREE.Object3D | null = null;
+
+const gimbalPivots: (THREE.Group | null)[]     = [null, null, null];
+const gimbalBaseQuat: THREE.Quaternion[]        = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
+let trajectoryPlayer: TrajectoryPlayer | null   = null;
 
 let leftChopstick: THREE.Object3D | null = null;
 let rightChopstick: THREE.Object3D | null = null;
@@ -354,11 +359,16 @@ loader.load(
 
     const comOffset = center.clone().sub(model.position);
 
+    trajectoryPlayer = new TrajectoryPlayer(model, gimbalPivots, gimbalBaseQuat);
+
     window.addEventListener("keydown", (e) => {
       if (e.key === "t" || e.key === "T") {
         model.position.set(-center.x, -box.min.y, -center.z);
         model.rotation.z = BOOSTER.rotationZ;
         startTrajectoryAnimation(scene, model, comOffset, size.y);
+      }
+      if (e.key === "p" || e.key === "P") {
+        trajectoryPlayer?.connect();
       }
     });
 
@@ -425,8 +435,6 @@ loader.load(
 
     // --- engines ---
 
-    const gimbalPivots: (THREE.Group | null)[] = [null, null, null];
-    const gimbalBaseQuat: THREE.Quaternion[] = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
     const engMat = new THREE.MeshStandardMaterial({ color: 0x7a3010, roughness: 0.8, metalness: 0.2, envMapIntensity: 0.6 });
 
     ENGINE_TRANSFORMS.forEach(([px, py, pz, rx, ry, rz], i) => {
@@ -882,6 +890,7 @@ function animate() {
   requestAnimationFrame(animate);
   controls.update();
   if ((window as any).__tickPosAnims) (window as any).__tickPosAnims();
+  trajectoryPlayer?.tick();
   tickChopstick(leftChopstick, leftChopstickBaseQ, leftChopAngleDeg, leftOsc, leftOscX, 1, -8, 60);
   tickChopstick(rightChopstick, rightChopstickBaseQ, rightChopAngleDeg, rightOsc, rightOscX, -1, -60, 8);
   tickTransOscillation(connTransOsc, chopConnector);

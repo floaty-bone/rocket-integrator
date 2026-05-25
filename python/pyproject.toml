@@ -9,10 +9,12 @@ dependencies = [
     "scipy>=1.12",
     "control>=0.10.2",
     "jax>=0.6.2",
+    "websockets>=12.0",
 ]
 
 [project.scripts]
-simulate = "rocket.main:main"
+simulate = "rocket.scenarios.open_loop:main"
+simulate-sil = "rocket.scenarios.sil_hover:main"
 
 [build-system]
 requires = ["hatchling"]
