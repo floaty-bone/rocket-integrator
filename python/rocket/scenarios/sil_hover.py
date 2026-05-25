@@ -163,20 +163,26 @@ def run_sil_simulation():
     ctrl_count    = 0
     frame_idx     = 1
     report_every  = n_steps // 10
+    ctrl_time     = 0.0
+    plant_time    = 0.0
 
     for step_idx in range(1, n_steps):
         t = step_idx * STEP_SIZE
 
         # ── CONTROLLER BLOCK (CONTROL_FREQ) ──────────────────────────────────
         if t >= t_next_ctrl:
+            _t0 = time.perf_counter()
             u_gimbal = controller_block(
                 state, setpoint, u_gimbal, step_idx, controller, lin_steps, u_nominal_cart,
             )
+            ctrl_time  += time.perf_counter() - _t0
             t_next_ctrl += ctrl_period
             ctrl_count  += 1
 
         # ── SIL BOUNDARY: [α, β, T] → plant ──────────────────────────────────
+        _t0 = time.perf_counter()
         state = plant_block(state, u_gimbal, wrench_buf, integrator, a, l)
+        plant_time += time.perf_counter() - _t0
 
         if step_idx % SAMPLE_RATE == 0 and frame_idx < n_frames:
             trajectory[frame_idx], u_history[frame_idx] = state, u_gimbal
@@ -190,12 +196,19 @@ def run_sil_simulation():
     rt_ratio     = SIM_TIME / elapsed
 
     np.set_printoptions(precision=4, suppress=True)
+    other_time = elapsed - ctrl_time - plant_time
+
     print(f"\n{'─'*44}", flush=True)
     print(f"  Sim time          : {SIM_TIME:.1f} s")
     print(f"  Wall time         : {elapsed:.3f} s")
     print(f"  Effective sim rate: {effective_hz:,.0f} Hz  (target {SIM_FREQ} Hz)")
     print(f"  Real-time ratio   : {rt_ratio:.2f}x  ({'faster' if rt_ratio > 1 else 'slower'} than real-time)")
     print(f"  Control updates   : {ctrl_count:,}  ({ctrl_count / SIM_TIME:.0f} Hz)")
+    print(f"{'─'*44}")
+    print(f"  Time breakdown:")
+    print(f"    Plant (RK4)     : {plant_time:.3f} s  ({100*plant_time/elapsed:.1f}%)")
+    print(f"    Controller      : {ctrl_time:.3f} s  ({100*ctrl_time/elapsed:.1f}%)")
+    print(f"    Other           : {other_time:.3f} s  ({100*other_time/elapsed:.1f}%)")
     print(f"{'─'*44}")
     print(f"  Final position    : {state[0:3]}")
     print(f"  Target position   : {setpoint[0:3]}")
