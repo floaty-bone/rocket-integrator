@@ -1,0 +1,220 @@
+"""
+sil_hover.py — Software-in-the-Loop hover & translate scenario.
+
+Closed-loop simulation:
+  * Plant     :class:`RK4Integrator` driven by ``compute_wrench`` from the
+    NumPy thrust model.
+  * Controller :class:`LQRController` re-linearised periodically at
+    ``LINEARIZATION_RATE`` Hz, evaluated at ``CONTROL_FREQ`` Hz.
+  * SIL boundary uses the real TVC representation ``[α, β, T]`` per engine.
+
+Run with::
+
+    python -m rocket.scenarios.sil_hover
+"""
+
+from __future__ import annotations
+
+import math
+import time
+
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+
+from rocket.config.vehicle import (
+    COM_TO_ENGINE_PLANE,
+    ENGINE_CLUSTER_RADIUS,
+    GRAVITY_FORCE,
+    INERTIA_MATRIX,
+    VEHICLE_MASS,
+    hover_thrust_per_engine,
+)
+from rocket.control.lqr_controller import LQRController
+from rocket.plant.dynamics import make_F
+from rocket.plant.thrust import compute_thrust_forces_and_moments_cartesian_np as compute_wrench_np
+from rocket.plant.tvc import cart9_to_gimbal9, gimbal9_to_cart9
+from rocket.integration.integrator import RK4Integrator
+from rocket.viz.animation import animate
+from rocket.viz.plots import plot_thrust, plot_trajectory_tracking
+
+
+# =============================================================================
+# CONFIG
+# =============================================================================
+SIM_TIME           = 30.0
+SIM_FREQ           = 5000   # Hz
+CONTROL_FREQ       = 1000   # Hz
+LINEARIZATION_RATE = 10     # Hz
+STEP_SIZE          = 1.0 / SIM_FREQ
+SAMPLE_RATE        = int(SIM_FREQ / 5)  # record at 5 Hz
+
+
+# =============================================================================
+# CONTROLLER BLOCK
+#   IN  : state [13], setpoint [13]
+#   OUT : u_gimbal [9] — [alpha, beta, T] per engine  ← SIL boundary
+# =============================================================================
+def controller_block(
+    state: np.ndarray,
+    setpoint: np.ndarray,
+    u_gimbal_prev: np.ndarray,
+    step_idx: int,
+    controller: LQRController,
+    lin_steps: int,
+    u_nominal_cart: np.ndarray,
+) -> np.ndarray:
+    if step_idx % lin_steps == 0:
+        controller.update_linearization(
+            jnp.array(state),
+            jnp.array(gimbal9_to_cart9(u_gimbal_prev)),
+        )
+    u_cart = controller.update(state, setpoint=setpoint, u_nominal=u_nominal_cart)
+    return cart9_to_gimbal9(u_cart)
+
+
+# =============================================================================
+# PLANT BLOCK
+#   IN  : state [13], u_gimbal [9] — [alpha, beta, T] per engine  ← SIL boundary
+#   OUT : state [13]
+# =============================================================================
+def plant_block(
+    state: np.ndarray,
+    u_gimbal: np.ndarray,
+    wrench_buf: list,
+    integrator: RK4Integrator,
+    a: float,
+    l: float,
+) -> np.ndarray:
+    wrench_buf[0] = compute_wrench_np(gimbal9_to_cart9(u_gimbal).reshape(3, 3), a, l)
+    return integrator.step_forward(state)
+
+
+# =============================================================================
+# VEHICLE SETUP
+# =============================================================================
+
+def _make_controller():
+    F = make_F(
+        mass=VEHICLE_MASS,
+        inertia_matrix=INERTIA_MATRIX,
+        gravity_force=GRAVITY_FORCE,
+        a=ENGINE_CLUSTER_RADIUS,
+        l=COM_TO_ENGINE_PLANE,
+    )
+    Q = np.diag([3e6, 3e6, 6e6, 1e2, 1e2, 1e2, 1e5, 1e5, 1e5, 1e1, 1e1, 1e1])
+    R = np.eye(9)
+    return LQRController(F, Q=Q, R=R)
+
+
+def _make_initial_conditions():
+    theta = -math.pi / 2
+    qw, qy = math.cos(theta / 2), math.sin(theta / 2)
+    initial_state = np.array([0.0, 0.0, 0.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    setpoint      = np.array([50.0, 100.0, 60.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    hover         = hover_thrust_per_engine()
+    u_nominal_cart = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
+    return initial_state, setpoint, u_nominal_cart
+
+
+# =============================================================================
+# SIMULATION
+# =============================================================================
+
+def run_sil_simulation():
+    a, l = ENGINE_CLUSTER_RADIUS, COM_TO_ENGINE_PLANE
+
+    print("Initializing LQR Controller...", flush=True)
+    controller = _make_controller()
+
+    initial_state, setpoint, u_nominal_cart = _make_initial_conditions()
+    u_nominal_gimbal = cart9_to_gimbal9(u_nominal_cart)
+
+    print("Performing initial linearization...", flush=True)
+    controller.update_linearization(jnp.array(initial_state), jnp.array(u_nominal_cart))
+
+    # -- Integrator --
+    wrench_buf = [compute_wrench_np(gimbal9_to_cart9(u_nominal_gimbal).reshape(3, 3), a, l)]
+
+    integrator = RK4Integrator(
+        get_body_wrench=lambda: wrench_buf[0],
+        get_inertial_force=lambda: GRAVITY_FORCE,
+        inertia_matrix=INERTIA_MATRIX,
+        mass=VEHICLE_MASS,
+        step_size=STEP_SIZE,
+    )
+
+    # -- Buffers --
+    n_steps   = int(SIM_TIME / STEP_SIZE)
+    lin_steps = int(1.0 / (STEP_SIZE * LINEARIZATION_RATE))
+    n_frames  = n_steps // SAMPLE_RATE + 1
+    trajectory = np.empty((n_frames, 13))
+    u_history  = np.empty((n_frames, 9))
+
+    state    = initial_state.copy()
+    u_gimbal = u_nominal_gimbal.copy()
+    trajectory[0], u_history[0] = state, u_gimbal
+
+    # -- Loop --
+    print(f"\nRunning SIL simulation for {SIM_TIME}s...", flush=True)
+    start_time    = time.time()
+    t_next_ctrl   = 0.0
+    ctrl_period   = 1.0 / CONTROL_FREQ
+    ctrl_count    = 0
+    frame_idx     = 1
+    report_every  = n_steps // 10
+
+    for step_idx in range(1, n_steps):
+        t = step_idx * STEP_SIZE
+
+        # ── CONTROLLER BLOCK (CONTROL_FREQ) ──────────────────────────────────
+        if t >= t_next_ctrl:
+            u_gimbal = controller_block(
+                state, setpoint, u_gimbal, step_idx, controller, lin_steps, u_nominal_cart,
+            )
+            t_next_ctrl += ctrl_period
+            ctrl_count  += 1
+
+        # ── SIL BOUNDARY: [α, β, T] → plant ──────────────────────────────────
+        state = plant_block(state, u_gimbal, wrench_buf, integrator, a, l)
+
+        if step_idx % SAMPLE_RATE == 0 and frame_idx < n_frames:
+            trajectory[frame_idx], u_history[frame_idx] = state, u_gimbal
+            frame_idx += 1
+
+        if step_idx % report_every == 0:
+            print(f"  {step_idx * 100 // n_steps}% complete...", flush=True)
+
+    elapsed      = time.time() - start_time
+    effective_hz = n_steps / elapsed
+    rt_ratio     = SIM_TIME / elapsed
+
+    np.set_printoptions(precision=4, suppress=True)
+    print(f"\n{'─'*44}", flush=True)
+    print(f"  Sim time          : {SIM_TIME:.1f} s")
+    print(f"  Wall time         : {elapsed:.3f} s")
+    print(f"  Effective sim rate: {effective_hz:,.0f} Hz  (target {SIM_FREQ} Hz)")
+    print(f"  Real-time ratio   : {rt_ratio:.2f}x  ({'faster' if rt_ratio > 1 else 'slower'} than real-time)")
+    print(f"  Control updates   : {ctrl_count:,}  ({ctrl_count / SIM_TIME:.0f} Hz)")
+    print(f"{'─'*44}")
+    print(f"  Final position    : {state[0:3]}")
+    print(f"  Target position   : {setpoint[0:3]}")
+    print(f"  Quat norm         : {np.linalg.norm(state[3:7]):.8f}  (should be ≈ 1)")
+    print(f"{'─'*44}", flush=True)
+
+    return trajectory[:frame_idx], u_history[:frame_idx], STEP_SIZE, SAMPLE_RATE, SIM_TIME, setpoint
+
+
+def main() -> None:
+    trajectory, u_history, dt, sample, sim_time, setpoint = run_sil_simulation()
+
+    print("Generating plots...", flush=True)
+    plot_trajectory_tracking(trajectory, dt, sample, sim_time, setpoint)
+    plot_thrust(u_history, dt, sample, sim_time)
+
+    print("Launching animation...", flush=True)
+    animate(trajectory, sample_rate=sample, step_size=dt, sim_time=sim_time)
+
+
+if __name__ == "__main__":
+    main()
