@@ -15,6 +15,8 @@ interface SimFrame {
   pos:     [number, number, number];    // meters, sim inertial (Z-up)
   quat:    [number, number, number, number]; // [w, x, y, z] body→inertial
   engines: [[number, number, number], [number, number, number], [number, number, number]]; // [[α,β,T]×3] rad,rad,N
+  omega:   [number, number, number];   // body angular rates [ωx, ωy, ωz] rad/s
+  u_cart?: [[number, number, number], [number, number, number], [number, number, number]]; // [[Fx,Fy,Fz]×3] N
 }
 
 export class TrajectoryPlayer {
@@ -25,7 +27,7 @@ export class TrajectoryPlayer {
   private readonly statusEl: HTMLElement;
 
   onMeta?:     (totalTime: number, setpoint: [number, number, number]) => void;
-  onFrame?:    (t: number, pos: [number, number, number], engines: [number, number, number][]) => void;
+  onFrame?:    (t: number, pos: [number, number, number], engines: [number, number, number][], omega: [number, number, number], u_cart?: [number, number, number][]) => void;
   onComplete?: () => void;
 
   private ws: WebSocket | null = null;
@@ -72,23 +74,27 @@ export class TrajectoryPlayer {
   }
 
   connect(url = "ws://localhost:8765"): void {
-    if (this.ws) { this.ws.close(); this.ws = null; }
+    if (this.ws) { this.ws.onopen = null; this.ws.onmessage = null; this.ws.onerror = null; this.ws.onclose = null; this.ws.close(); this.ws = null; }
     this.meta   = null;
     this.frameA = null;
     this.frameB = null;
     this._initTrail();
 
     this._setStatus("Connecting to simulation…");
-    this.ws = new WebSocket(url);
+    const ws = new WebSocket(url);
+    this.ws = ws;
 
-    this.ws.onopen    = () => { this._setStatus("Connected — waiting for first frame…"); };
-    this.ws.onmessage = (evt: MessageEvent) => {
+    ws.onopen    = () => { if (this.ws !== ws) return; this._setStatus("Connected — waiting for first frame…"); };
+    ws.onmessage = (evt: MessageEvent) => {
+      if (this.ws !== ws) return;
       this._onMessage(JSON.parse(evt.data) as SimMeta | SimFrame);
     };
-    this.ws.onerror   = () => {
+    ws.onerror   = () => {
+      if (this.ws !== ws) return;
       this._setStatus("Connection failed — is `python -m rocket.scenarios.sil_hover` running?", 6000);
     };
-    this.ws.onclose   = () => {
+    ws.onclose   = () => {
+      if (this.ws !== ws) return;
       if (this.meta) {
         this._setStatus(`Simulation complete  (${this.meta.total_time.toFixed(1)} s)`, 4000);
         this.onComplete?.();
@@ -138,7 +144,7 @@ export class TrajectoryPlayer {
     this.frameB = frame;
     if (!this.frameA) this.frameA = frame;
 
-    this.onFrame?.(frame.t, frame.pos, frame.engines);
+    this.onFrame?.(frame.t, frame.pos, frame.engines, frame.omega ?? [0, 0, 0], frame.u_cart);
 
     if (this.meta) {
       this._setStatus(`Sim  t = ${frame.t.toFixed(2)} s / ${this.meta.total_time.toFixed(1)} s`);

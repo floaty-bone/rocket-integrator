@@ -1,6 +1,8 @@
-// live_plots.ts — 6 live telemetry charts fed from the WebSocket stream.
-//   Plots 0-2 : X / Y / Z position vs time, with setpoint dashed line.
-//   Plots 3-5 : Engine 1 / 2 / 3 — α & β (left axis, deg) + thrust (right axis, kN).
+// live_plots.ts — 12 live telemetry charts fed from the WebSocket stream.
+//   Plots 0-2  : X / Y / Z position vs time, with setpoint dashed line.
+//   Plots 3-5  : Engine 1 / 2 / 3 — α & β (left axis, deg) + thrust (right axis, kN).
+//   Plots 6-8  : Body angular rates ωx / ωy / ωz (rad/s).
+//   Plots 9-11 : Engine 1 / 2 / 3 — raw Cartesian thrust Fx / Fy / Fz (kN).
 
 const PAD  = { top: 18, right: 52, bottom: 20, left: 46 };
 const CW   = 400;
@@ -25,6 +27,7 @@ function drawAxes(
   title: string,
   leftColor: string,
   rightColor: string | null,
+  leftUnit?: string,
 ) {
   const xp = PAD.left, yb = PAD.top + ph;
 
@@ -82,7 +85,7 @@ function drawAxes(
   ctx.font = "8px monospace";
   ctx.fillStyle = leftColor;
   ctx.textAlign = "left";
-  ctx.fillText(leftColor === "#55cc88" ? "m" : "deg", 2, PAD.top + 4);
+  ctx.fillText(leftUnit ?? (leftColor === "#55cc88" ? "m" : "deg"), 2, PAD.top + 4);
   if (rightColor) {
     ctx.textAlign = "right";
     ctx.fillStyle = rightColor;
@@ -220,6 +223,59 @@ function drawEnginePlot(
   ]);
 }
 
+function drawOmegaPlot(
+  ctx: CanvasRenderingContext2D,
+  axis: "X" | "Y" | "Z",
+  times: number[], data: number[],
+  totalTime: number,
+) {
+  const pw = CW - PAD.left - PAD.right;
+  const ph = CH - PAD.top  - PAD.bottom;
+
+  ctx.fillStyle = "#0a0c10";
+  ctx.fillRect(0, 0, CW, CH);
+
+  const [yMin, yMax] = yRange(data.length ? data : [0], 0.1);
+
+  drawAxes(ctx, pw, ph, yMin, yMax, null, null, `Body Rate ω${axis}`, "#c084fc", null, "rad/s");
+
+  polyline(ctx, times, data, totalTime, pw, ph, yMin, yMax, "#c084fc", 1.5);
+
+  const last = data.length ? data[data.length - 1] : null;
+  legend(ctx, ph, [["#c084fc", `ω${axis}`, last]]);
+}
+
+function drawCartThrustPlot(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  times: number[],
+  fx: number[], fy: number[], fz: number[],
+  totalTime: number,
+) {
+  const pw = CW - PAD.left - PAD.right;
+  const ph = CH - PAD.top  - PAD.bottom;
+
+  ctx.fillStyle = "#0a0c10";
+  ctx.fillRect(0, 0, CW, CH);
+
+  const [yMin, yMax] = yRange([...fx, ...fy, ...fz]);
+
+  drawAxes(ctx, pw, ph, yMin, yMax, null, null, label, "#ff6666", null, "kN");
+
+  polyline(ctx, times, fx, totalTime, pw, ph, yMin, yMax, "#ff6666", 1.5);
+  polyline(ctx, times, fy, totalTime, pw, ph, yMin, yMax, "#66ff66", 1.5);
+  polyline(ctx, times, fz, totalTime, pw, ph, yMin, yMax, "#6688ff", 1.5);
+
+  const lastX = fx.length ? fx[fx.length - 1] : null;
+  const lastY = fy.length ? fy[fy.length - 1] : null;
+  const lastZ = fz.length ? fz[fz.length - 1] : null;
+  legend(ctx, ph, [
+    ["#ff6666", "Fx", lastX],
+    ["#66ff66", "Fy", lastY],
+    ["#6688ff", "Fz", lastZ],
+  ]);
+}
+
 // ─── LivePlots class ──────────────────────────────────────────────────────────
 
 export class LivePlots {
@@ -233,6 +289,10 @@ export class LivePlots {
   private alpha:  [number[], number[], number[]] = [[], [], []];
   private beta:   [number[], number[], number[]] = [[], [], []];
   private thrust: [number[], number[], number[]] = [[], [], []];
+  private omega:  [number[], number[], number[]] = [[], [], []];
+  private cartFx: [number[], number[], number[]] = [[], [], []];
+  private cartFy: [number[], number[], number[]] = [[], [], []];
+  private cartFz: [number[], number[], number[]] = [[], [], []];
 
   constructor() { this._buildPanel(); }
 
@@ -244,12 +304,18 @@ export class LivePlots {
     this.alpha  = [[], [], []];
     this.beta   = [[], [], []];
     this.thrust = [[], [], []];
+    this.omega  = [[], [], []];
+    this.cartFx = [[], [], []];
+    this.cartFy = [[], [], []];
+    this.cartFz = [[], [], []];
   }
 
   addFrame(
     t: number,
     pos: [number, number, number],
     engines: [number, number, number][],
+    omega: [number, number, number],
+    u_cart?: [number, number, number][],
   ): void {
     const R2D = 180 / Math.PI;
     this.times.push(t);
@@ -259,6 +325,14 @@ export class LivePlots {
       this.beta[i].push(engines[i][1]   * R2D);
       const T = engines[i][2];
       this.thrust[i].push((T !== undefined && isFinite(T)) ? T / 1000 : NaN);
+    }
+    for (let i = 0; i < 3; i++) this.omega[i].push(omega[i]);
+    if (u_cart) {
+      for (let i = 0; i < 3; i++) {
+        this.cartFx[i].push(u_cart[i][0] / 1000);
+        this.cartFy[i].push(u_cart[i][1] / 1000);
+        this.cartFz[i].push(u_cart[i][2] / 1000);
+      }
     }
   }
 
@@ -275,6 +349,21 @@ export class LivePlots {
       drawEnginePlot(
         this.ctxs[3 + i], `Engine ${i + 1}`,
         this.times, this.alpha[i], this.beta[i], this.thrust[i],
+        this.totalTime,
+      );
+    }
+    const omegaLabels: ("X" | "Y" | "Z")[] = ["X", "Y", "Z"];
+    for (let i = 0; i < 3; i++) {
+      drawOmegaPlot(
+        this.ctxs[6 + i], omegaLabels[i],
+        this.times, this.omega[i],
+        this.totalTime,
+      );
+    }
+    for (let i = 0; i < 3; i++) {
+      drawCartThrustPlot(
+        this.ctxs[9 + i], `Engine ${i + 1} Cart`,
+        this.times, this.cartFx[i], this.cartFy[i], this.cartFz[i],
         this.totalTime,
       );
     }
@@ -311,7 +400,7 @@ export class LivePlots {
     `;
 
     const dpr = window.devicePixelRatio || 1;
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 12; i++) {
       const canvas = document.createElement("canvas");
       canvas.width  = CW * dpr;
       canvas.height = CH * dpr;

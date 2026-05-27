@@ -19,18 +19,20 @@ async def serve_trajectory(
     step_size: float,
     sample_rate: int,
     setpoint: np.ndarray | None = None,
+    ucart_history: np.ndarray | None = None,
     host: str = "localhost",
     port: int = 8765,
 ) -> None:
     """Stream a recorded trajectory to a WebSocket client at real-time speed.
 
     Args:
-        trajectory:  ``(n_frames, 13)`` state vectors sampled from the sim.
-        u_history:   ``(n_frames, 9)`` gimbal commands ``[α, β, T] × 3 engines``.
-        step_size:   Integration step size (s).
-        sample_rate: Steps between recorded frames.
-        host:        WebSocket bind address.
-        port:        WebSocket port.
+        trajectory:     ``(n_frames, 13)`` state vectors sampled from the sim.
+        u_history:      ``(n_frames, 9)`` gimbal commands ``[α, β, T] × 3 engines``.
+        step_size:      Integration step size (s).
+        sample_rate:    Steps between recorded frames.
+        ucart_history:  ``(n_frames, 9)`` raw Cartesian thrust ``[Fx, Fy, Fz] × 3``.
+        host:           WebSocket bind address.
+        port:           WebSocket port.
     """
     import websockets  # optional dep — imported here so the rest of the module loads without it
 
@@ -75,7 +77,15 @@ async def serve_trajectory(
                     [round(float(u[3]), 6), round(float(u[4]), 6), round(float(u[5]), 1)],
                     [round(float(u[6]), 6), round(float(u[7]), 6), round(float(u[8]), 1)],
                 ],
+                "omega": [round(float(state[10]), 6), round(float(state[11]), 6), round(float(state[12]), 6)],
             }
+            if ucart_history is not None:
+                uc = ucart_history[i]
+                frame["u_cart"] = [
+                    [round(float(uc[0]), 1), round(float(uc[1]), 1), round(float(uc[2]), 1)],
+                    [round(float(uc[3]), 1), round(float(uc[4]), 1), round(float(uc[5]), 1)],
+                    [round(float(uc[6]), 1), round(float(uc[7]), 1), round(float(uc[8]), 1)],
+                ]
             await websocket.send(json.dumps(frame))
 
             # Sleep only the remaining time until the next frame deadline so

@@ -41,7 +41,7 @@ from rocket.viz.plots import plot_thrust, plot_trajectory_tracking
 # =============================================================================
 # CONFIG
 # =============================================================================
-SIM_TIME           = 30.0
+SIM_TIME           = 40.0
 SIM_FREQ           = 8000   # Hz
 CONTROL_FREQ       = 5000   # Hz
 LINEARIZATION_RATE = 30     # Hz
@@ -69,7 +69,7 @@ def controller_block(
             jnp.array(gimbal9_to_cart9(u_gimbal_prev)),
         )
     u_cart = controller.update(state, setpoint=setpoint, u_nominal=u_nominal_cart)
-    return cart9_to_gimbal9(u_cart)
+    return cart9_to_gimbal9(u_cart), u_cart
 
 
 # =============================================================================
@@ -101,16 +101,22 @@ def _make_controller():
         a=ENGINE_CLUSTER_RADIUS,
         l=COM_TO_ENGINE_PLANE,
     )
-    Q = np.diag([1e7, 1e7, 1e7, 1e2, 1e2, 1e2, 1e8, 1e8, 2.3e8, 1, 1, 1])
-    R = np.eye(9)
+    Q = np.diag([2.4e7, 2.4e7, 1e7, 0.1, 0.1, 0.1, 3e8, 3e8, 2.63e8, 0.1, 0.1, 0.1])
+    R = np.diag([1, 1, 1, 1, 1, 1, 1, 1, 1])
     return LQRController(F, Q=Q, R=R)
 
 
 def _make_initial_conditions():
-    theta = -math.pi / 2
-    qw, qy = math.cos(theta / 2), math.sin(theta / 2)
-    initial_state = np.array([60.0, 60.0, 500.0, qw, 0.0, qy, 0.0, 0.0, 0.0, -61.0, 0.0, 0.0, 0.0])
-    setpoint      = np.array([0.0, 0.0, 50.0, qw, 0.0, qy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    initial_pitch_deg = -90
+    half = math.radians(initial_pitch_deg) / 2.0
+    qwi, qxi, qyi, qzi = math.cos(half), 0.0, math.sin(half), 0.0
+
+    setpoint_pitch_deg=-90
+    setpoint_half = math.radians(setpoint_pitch_deg) / 2.0
+    qw, qx, qy, qz =math.cos(setpoint_half),0.0,math.sin(setpoint_half), 0.0
+
+    initial_state = np.array([60.0, 100.0, 500.0, qwi, qxi, qyi, qzi, 0.0, 0.0, -63.0, 0.0, 0.0, 0.0])
+    setpoint      = np.array([0.0, 0.0, 50.0,   qw, qx, qy, qz, 0.0, 0.0,   0.0, 0.0, 0.0, 0.0])
     hover         = hover_thrust_per_engine()
     u_nominal_cart = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
     return initial_state, setpoint, u_nominal_cart
@@ -147,12 +153,14 @@ def run_sil_simulation():
     n_steps   = int(SIM_TIME / STEP_SIZE)
     lin_steps = int(1.0 / (STEP_SIZE * LINEARIZATION_RATE))
     n_frames  = n_steps // SAMPLE_RATE + 1
-    trajectory = np.empty((n_frames, 13))
-    u_history  = np.empty((n_frames, 9))
+    trajectory    = np.empty((n_frames, 13))
+    u_history     = np.empty((n_frames, 9))
+    ucart_history = np.empty((n_frames, 9))
 
     state    = initial_state.copy()
     u_gimbal = u_nominal_gimbal.copy()
-    trajectory[0], u_history[0] = state, u_gimbal
+    u_cart   = u_nominal_cart.copy()
+    trajectory[0], u_history[0], ucart_history[0] = state, u_gimbal, u_cart
 
     # -- Loop --
     print(f"\nRunning SIL simulation for {SIM_TIME}s...", flush=True)
@@ -171,7 +179,7 @@ def run_sil_simulation():
         # ── CONTROLLER BLOCK (CONTROL_FREQ) ──────────────────────────────────
         if t >= t_next_ctrl:
             _t0 = time.perf_counter()
-            u_gimbal = controller_block(
+            u_gimbal, u_cart = controller_block(
                 state, setpoint, u_gimbal, step_idx, controller, lin_steps, u_nominal_cart,
             )
             ctrl_time  += time.perf_counter() - _t0
@@ -184,7 +192,7 @@ def run_sil_simulation():
         plant_time += time.perf_counter() - _t0
 
         if step_idx % SAMPLE_RATE == 0 and frame_idx < n_frames:
-            trajectory[frame_idx], u_history[frame_idx] = state, u_gimbal
+            trajectory[frame_idx], u_history[frame_idx], ucart_history[frame_idx] = state, u_gimbal, u_cart
             frame_idx += 1
 
         if step_idx % report_every == 0:
@@ -214,21 +222,21 @@ def run_sil_simulation():
     print(f"  Quat norm         : {np.linalg.norm(state[3:7]):.8f}  (should be ≈ 1)")
     print(f"{'─'*44}", flush=True)
 
-    return trajectory[:frame_idx], u_history[:frame_idx], STEP_SIZE, SAMPLE_RATE, SIM_TIME, setpoint
+    return trajectory[:frame_idx], u_history[:frame_idx], ucart_history[:frame_idx], STEP_SIZE, SAMPLE_RATE, SIM_TIME, setpoint
 
 
 def main() -> None:
     import asyncio
     from rocket.viz.ws_server import serve_trajectory
 
-    trajectory, u_history, dt, sample, sim_time, setpoint = run_sil_simulation()
+    trajectory, u_history, ucart_history, dt, sample, sim_time, setpoint = run_sil_simulation()
 
     print("Generating plots...", flush=True)
     plot_trajectory_tracking(trajectory, dt, sample, sim_time, setpoint)
     plot_thrust(u_history, dt, sample, sim_time)
 
     print("Starting WebSocket server...", flush=True)
-    asyncio.run(serve_trajectory(trajectory, u_history, dt, sample, setpoint=setpoint))
+    asyncio.run(serve_trajectory(trajectory, u_history, dt, sample, setpoint=setpoint, ucart_history=ucart_history))
 
 
 if __name__ == "__main__":

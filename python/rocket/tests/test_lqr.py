@@ -1,15 +1,20 @@
-import numpy as np
+"""Stand-alone LQR + controllability sanity check at the 12-D tangent-space
+linearisation of the dynamics.  Strips the quaternion ``qw`` row/column
+(index 3) by deletion as a quick reference projection."""
+
+from __future__ import annotations
+
 import control as ctrl
 import jax
 import jax.numpy as jnp
-import time
-from dynamics_function import make_F
+import numpy as np
 
-VEHICLE_MASS   = 120_000.0
-INERTIA_MATRIX = np.diag([1.2e6, 3.5e7, 3.5e7])
-GRAVITY_FORCE  = np.array([0.0, 0.0, -VEHICLE_MASS * 9.8])
-Q=np.diag([1e3]*13)
-R=np.diag([1e3]*9)    
+from rocket.config.vehicle import GRAVITY_FORCE, INERTIA_MATRIX, VEHICLE_MASS
+from rocket.plant.dynamics import make_F
+
+
+Q = np.diag([1e3] * 13)
+R = np.diag([1e3] * 9)
 
 F = make_F(
     mass=VEHICLE_MASS,
@@ -37,12 +42,10 @@ try:
     print("LQR solved!")
 except Exception as e:
     print("LQR failed:", e)
-    
-    # Check controllability
+
     Ctr = ctrl.ctrb(A_12, B_12)
     rank = np.linalg.matrix_rank(Ctr)
     print("Controllability matrix rank:", rank)
-    
-    # check eigenvalues
+
     evals, evecs = np.linalg.eig(A_12)
     print("Eigenvalues:", evals)

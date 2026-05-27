@@ -363,7 +363,7 @@ loader.load(
 
     trajectoryPlayer = new TrajectoryPlayer(model, gimbalPivots, gimbalBaseQuat, scene);
     trajectoryPlayer.onMeta     = (total, sp) => livePlots.setMeta(total, sp);
-    trajectoryPlayer.onFrame    = (t, pos, eng) => livePlots.addFrame(t, pos, eng);
+    trajectoryPlayer.onFrame    = (t, pos, eng, omega, u_cart) => livePlots.addFrame(t, pos, eng, omega, u_cart);
 
     window.addEventListener("keydown", (e) => {
       if (e.key === "t" || e.key === "T") {
@@ -456,7 +456,8 @@ loader.load(
           eng.position.z = ENGINE_GIMBAL_OFFSET_Z;
 
           const pivot = new THREE.Group();
-          addFrame(pivot, size.z * 0.5);
+          const thrustLen = size.z * 4.0;
+          pivot.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), thrustLen, 0xff0000, thrustLen * 0.08, thrustLen * 0.04));
           pivot.add(eng);
 
           pivot.position.copy(toModelLocal(px, py, pz));
