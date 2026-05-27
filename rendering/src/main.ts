@@ -116,13 +116,41 @@ scene.add(bounce);
 
 const loader = new GLTFLoader();
 
+// =============================================================================
+// CATCH SEQUENCE THRESHOLDS  (metres, sim inertial space)
+// =============================================================================
+const CATCH_CLOSE_DIST = 50;   // A: chopsticks close
+const CATCH_LAND_DIST = 2;    // B: engines off + freeze + wobble
+
 let stage0Model: THREE.Object3D | null = null;
 let boosterModel: THREE.Object3D | null = null;
 
-const gimbalPivots: (THREE.Group | null)[]     = [null, null, null];
-const gimbalBaseQuat: THREE.Quaternion[]        = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
-let trajectoryPlayer: TrajectoryPlayer | null   = null;
+const gimbalPivots: (THREE.Group | null)[] = [null, null, null];
+const gimbalBaseQuat: THREE.Quaternion[] = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
+let trajectoryPlayer: TrajectoryPlayer | null = null;
 const livePlots = new LivePlots();
+
+// catch sequence state
+const thrustArrows: THREE.ArrowHelper[] = [];
+let thrustArrowBaseLen = 0;
+const THRUST_REF_N = 1_000_000;   // thrust (N) that maps to full arrow length
+let simSetpoint: [number, number, number] | null = null;
+let catchPhase1Done = false;
+let catchPhase2Done = false;
+
+// module-level animation queue used by catch sequence
+type ModuleAnim = { startTime: number; startVal: number; endVal: number; duration: number; onUpdate: (v: number) => void; onDone?: () => void };
+const moduleAnims: ModuleAnim[] = [];
+
+function tickModuleAnims() {
+  const now = performance.now();
+  for (let i = moduleAnims.length - 1; i >= 0; i--) {
+    const a = moduleAnims[i];
+    const t = Math.min(1, (now - a.startTime) / (a.duration * 1000));
+    a.onUpdate(a.startVal + (a.endVal - a.startVal) * t);
+    if (t >= 1) { a.onDone?.(); moduleAnims.splice(i, 1); }
+  }
+}
 
 let leftChopstick: THREE.Object3D | null = null;
 let rightChopstick: THREE.Object3D | null = null;
@@ -176,7 +204,7 @@ const leftOscX: ChopOsc = { active: false, startTime: 0, baseAngle: 0, amp: 0.8 
 const rightOscX: ChopOsc = { active: false, startTime: 0, baseAngle: 0, amp: 0.8 };
 
 // translational wobble for the connector node
-const CHOP_TRANS_AMP_PER_MPS = 0.2;  // metres of wobble per m/s of translation speed
+const CHOP_TRANS_AMP_PER_MPS = 0.5;  // metres of wobble per m/s of translation speed
 const CHOP_TRANS_AMP_MAX = 4.0;
 const CHOP_TRANS_SPEED_REF = 5;       // m/s treated as "default" for manual wobble buttons
 const CHOP_TRANS_OMEGA = 3.5;
@@ -361,9 +389,43 @@ loader.load(
 
     const comOffset = center.clone().sub(model.position);
 
+    const _chopQtmp = new THREE.Quaternion();
+    const _chopLocalY = new THREE.Vector3(0, 1, 0);
+
+    function openChopsticks() {
+      leftChopAngleDeg = 30;
+      rightChopAngleDeg = -30;
+      _chopQtmp.setFromAxisAngle(_chopLocalY, 30 * (Math.PI / 180));
+      leftChopstick?.quaternion.copy(leftChopstickBaseQ).multiply(_chopQtmp);
+      _chopQtmp.setFromAxisAngle(_chopLocalY, -30 * (Math.PI / 180));
+      rightChopstick?.quaternion.copy(rightChopstickBaseQ).multiply(_chopQtmp);
+    }
+
+    function resetCatchSequence() {
+      catchPhase1Done = false;
+      catchPhase2Done = false;
+      moduleAnims.length = 0;
+
+      // re-attach booster to scene if it was parented to chopConnector
+      if (boosterModel && boosterModel.parent !== scene) {
+        scene.attach(boosterModel);
+      }
+
+      // unfreeze trajectory player
+      if (trajectoryPlayer) trajectoryPlayer.frozen = false;
+
+      // restore thrust arrows
+      for (const arrow of thrustArrows) arrow.visible = true;
+
+      // open chopsticks to catch-ready position
+      openChopsticks();
+    }
+
     trajectoryPlayer = new TrajectoryPlayer(model, gimbalPivots, gimbalBaseQuat, scene);
-    trajectoryPlayer.onMeta     = (total, sp) => livePlots.setMeta(total, sp);
-    trajectoryPlayer.onFrame    = (t, pos, eng, omega, u_cart) => livePlots.addFrame(t, pos, eng, omega, u_cart);
+    trajectoryPlayer.onMeta = (total, sp) => { livePlots.setMeta(total, sp); simSetpoint = sp; };
+    trajectoryPlayer.onFrame = (t, pos, eng, omega, u_cart) => livePlots.addFrame(t, pos, eng, omega, u_cart);
+    trajectoryPlayer.thrustArrows = thrustArrows;
+    trajectoryPlayer.thrustRefN = THRUST_REF_N;
 
     window.addEventListener("keydown", (e) => {
       if (e.key === "t" || e.key === "T") {
@@ -372,6 +434,7 @@ loader.load(
         startTrajectoryAnimation(scene, model, comOffset, size.y);
       }
       if (e.key === "p" || e.key === "P") {
+        resetCatchSequence();
         trajectoryPlayer?.connect();
       }
     });
@@ -457,7 +520,11 @@ loader.load(
 
           const pivot = new THREE.Group();
           const thrustLen = size.z * 4.0;
-          pivot.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), thrustLen, 0xff0000, thrustLen * 0.08, thrustLen * 0.04));
+          thrustArrowBaseLen = thrustLen;
+          if (trajectoryPlayer) trajectoryPlayer.thrustArrowBaseLen = thrustLen;
+          const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), thrustLen, 0xff0000, thrustLen * 0.08, thrustLen * 0.04);
+          thrustArrows.push(arrow);
+          pivot.add(arrow);
           pivot.add(eng);
 
           pivot.position.copy(toModelLocal(px, py, pz));
@@ -474,6 +541,76 @@ loader.load(
 
     boosterModel = model;
     buildControlPanel(model, fins, finBaseQuat, gimbalPivots, gimbalBaseQuat);
+
+    // ── Catch sequence checker @ 5 Hz ────────────────────────────────────────
+    setInterval(() => {
+      if (!trajectoryPlayer || !simSetpoint) return;
+      const pos = trajectoryPlayer.latestPos;
+      if (!pos) return;
+
+      const dx = pos[0] - simSetpoint[0];
+      const dy = pos[1] - simSetpoint[1];
+      const dz = pos[2] - simSetpoint[2];
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      // Phase 1: close chopsticks
+      if (!catchPhase1Done && dist < CATCH_CLOSE_DIST) {
+        catchPhase1Done = true;
+        const now = performance.now();
+        const duration = 6.0;
+
+        const startLeft = leftChopAngleDeg;
+        const startRight = rightChopAngleDeg;
+        const localChopYv = new THREE.Vector3(0, 1, 0);
+        const qTmp = new THREE.Quaternion();
+
+        triggerLeftWobble();
+        triggerRightWobble();
+
+        moduleAnims.push({
+          startTime: now, startVal: startLeft, endVal: -4, duration,
+          onUpdate: (v) => {
+            leftChopAngleDeg = v;
+            if (leftChopstick && !leftOsc.active && !leftOscX.active) {
+              qTmp.setFromAxisAngle(localChopYv, v * (Math.PI / 180));
+              leftChopstick.quaternion.copy(leftChopstickBaseQ).multiply(qTmp);
+            }
+          },
+          onDone: () => triggerLeftStopWobble(),
+        });
+
+        moduleAnims.push({
+          startTime: now, startVal: startRight, endVal: 7, duration,
+          onUpdate: (v) => {
+            rightChopAngleDeg = v;
+            if (rightChopstick && !rightOsc.active && !rightOscX.active) {
+              qTmp.setFromAxisAngle(localChopYv, v * (Math.PI / 180));
+              rightChopstick.quaternion.copy(rightChopstickBaseQ).multiply(qTmp);
+            }
+          },
+          onDone: () => triggerRightStopWobble(),
+        });
+      }
+
+      // Phase 2: engines off, freeze, attach to tower, vertical wobble
+      if (!catchPhase2Done && dist < CATCH_LAND_DIST) {
+        catchPhase2Done = true;
+
+        // zero thrust arrows
+        for (const arrow of thrustArrows) arrow.visible = false;
+
+        // freeze booster trajectory
+        if (trajectoryPlayer) trajectoryPlayer.frozen = true;
+
+        // reparent booster to chopstick connector (preserves world transform)
+        if (boosterModel && chopConnector) {
+          chopConnector.attach(boosterModel);
+        }
+
+        // trigger vertical wobble
+        triggerTransWobble();
+      }
+    }, 200);
 
     console.log(`Booster loaded — size: ${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)}`);
   },
@@ -899,6 +1036,7 @@ function animate() {
   requestAnimationFrame(animate);
   controls.update();
   if ((window as any).__tickPosAnims) (window as any).__tickPosAnims();
+  tickModuleAnims();
   trajectoryPlayer?.tick();
   livePlots.render();
   tickChopstick(leftChopstick, leftChopstickBaseQ, leftChopAngleDeg, leftOsc, leftOscX, 1, -8, 60);

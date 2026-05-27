@@ -101,7 +101,7 @@ def _make_controller():
         a=ENGINE_CLUSTER_RADIUS,
         l=COM_TO_ENGINE_PLANE,
     )
-    Q = np.diag([2.4e7, 2.4e7, 1e7, 0.1, 0.1, 0.1, 3e8, 3e8, 2.63e8, 0.1, 0.1, 0.1])
+    Q = np.diag([2.4e7, 2.4e7, 1e7, 0.1, 0.1, 0.1, 4e8, 4e8, 2.5e8, 0.1, 0.1, 0.1])
     R = np.diag([1, 1, 1, 1, 1, 1, 1, 1, 1])
     return LQRController(F, Q=Q, R=R)
 
@@ -115,8 +115,8 @@ def _make_initial_conditions():
     setpoint_half = math.radians(setpoint_pitch_deg) / 2.0
     qw, qx, qy, qz =math.cos(setpoint_half),0.0,math.sin(setpoint_half), 0.0
 
-    initial_state = np.array([60.0, 100.0, 500.0, qwi, qxi, qyi, qzi, 0.0, 0.0, -63.0, 0.0, 0.0, 0.0])
-    setpoint      = np.array([0.0, 0.0, 50.0,   qw, qx, qy, qz, 0.0, 0.0,   0.0, 0.0, 0.0, 0.0])
+    initial_state = np.array([70.0, 120.0, 600.0, qwi, qxi, qyi, qzi, 0.0, 0.0, -70.0, 0.0, 0.0, 0.0])
+    setpoint      = np.array([0.0, 0.0, 49.0,   qw, qx, qy, qz, 0.0, 0.0,   0.0, 0.0, 0.0, 0.0])
     hover         = hover_thrust_per_engine()
     u_nominal_cart = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
     return initial_state, setpoint, u_nominal_cart

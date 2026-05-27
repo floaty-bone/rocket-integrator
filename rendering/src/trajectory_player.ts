@@ -26,6 +26,11 @@ export class TrajectoryPlayer {
   private readonly initialPos: THREE.Vector3;
   private readonly statusEl: HTMLElement;
 
+  public frozen = false;
+  public thrustArrows: THREE.ArrowHelper[] = [];
+  public thrustArrowBaseLen = 0;   // full-length reference (Three.js units)
+  public thrustRefN = 1_000_000;   // thrust (N) that maps to full arrow length
+
   onMeta?:     (totalTime: number, setpoint: [number, number, number]) => void;
   onFrame?:    (t: number, pos: [number, number, number], engines: [number, number, number][], omega: [number, number, number], u_cart?: [number, number, number][]) => void;
   onComplete?: () => void;
@@ -115,8 +120,13 @@ export class TrajectoryPlayer {
     this.statusEl.style.display = "none";
   }
 
+  get latestPos(): [number, number, number] | null {
+    return this.frameB?.pos ?? null;
+  }
+
   /** Call once per render frame from the main animation loop. */
   tick(): void {
+    if (this.frozen) return;
     if (!this.frameA || !this.frameB || !this.meta) return;
     try {
       const elapsed = (performance.now() - this.startWallTime) / 1000;
@@ -168,6 +178,14 @@ export class TrajectoryPlayer {
       this._qx.setFromAxisAngle(this._axX, al);
       this._qy.setFromAxisAngle(this._axY, be);
       pivot.quaternion.copy(this.gimbalBaseQuat[i]).multiply(this._qx).multiply(this._qy);
+
+      const arrow = this.thrustArrows[i];
+      if (arrow && this.thrustArrowBaseLen > 0) {
+        const thrust = a.engines[i][2] + (b.engines[i][2] - a.engines[i][2]) * alpha;
+        const frac   = Math.max(0, Math.min(1, thrust / this.thrustRefN));
+        const len    = this.thrustArrowBaseLen * frac;
+        arrow.setLength(len, len * 0.08, len * 0.04);
+      }
     }
   }
 
