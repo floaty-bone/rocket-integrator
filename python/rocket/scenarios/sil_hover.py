@@ -15,7 +15,6 @@ Run with::
 
 from __future__ import annotations
 
-import math
 import time
 
 import jax.numpy as jnp
@@ -42,9 +41,10 @@ from rocket.viz.plots import plot_thrust, plot_trajectory_tracking
 # CONFIG
 # =============================================================================
 SIM_TIME           = 40.0
-SIM_FREQ           = 8000   # Hz
+SIM_FREQ           = 5000   # Hz
 CONTROL_FREQ       = 5000   # Hz
 LINEARIZATION_RATE = 30     # Hz
+RELINEARIZE        = False  # set True to re-linearize at LINEARIZATION_RATE Hz
 STEP_SIZE          = 1.0 / SIM_FREQ
 SAMPLE_RATE        = int(SIM_FREQ / 50)  # record at 50 Hz
 
@@ -63,7 +63,7 @@ def controller_block(
     lin_steps: int,
     u_nominal_cart: np.ndarray,
 ) -> np.ndarray:
-    if step_idx % lin_steps == 0:
+    if RELINEARIZE and step_idx % lin_steps == 0:
         controller.update_linearization(
             jnp.array(state),
             jnp.array(gimbal9_to_cart9(u_gimbal_prev)),
@@ -101,22 +101,17 @@ def _make_controller():
         a=ENGINE_CLUSTER_RADIUS,
         l=COM_TO_ENGINE_PLANE,
     )
-    Q = np.diag([2.4e7, 2.4e7, 1e7, 0.1, 0.1, 0.1, 4e8, 4e8, 2.5e8, 0.1, 0.1, 0.1])
-    R = np.diag([1, 1, 1, 1, 1, 1, 1, 1, 1])
+    Q = np.diag([1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 2e10, 2e10, 5e2, 1e8, 1e8, 1e8])
+    R = np.diag([0.8, 1.2, 1.2, 0.8, 1.2, 1.2, 0.8, 1.2, 1.2])
     return LQRController(F, Q=Q, R=R)
 
 
 def _make_initial_conditions():
-    initial_pitch_deg = -90
-    half = math.radians(initial_pitch_deg) / 2.0
-    qwi, qxi, qyi, qzi = math.cos(half), 0.0, math.sin(half), 0.0
+    qi = np.array([0.295413703592012, -0.702150346667812, -0.421894491949238, -0.491650965693363])   # initial quaternion [w, x, y, z]
+    q  = np.array([0.364186915338164, -0.606108810937832, -0.364186915338164, -0.606108810937832])   # setpoint quaternion [w, x, y, z]
 
-    setpoint_pitch_deg=-90
-    setpoint_half = math.radians(setpoint_pitch_deg) / 2.0
-    qw, qx, qy, qz =math.cos(setpoint_half),0.0,math.sin(setpoint_half), 0.0
-
-    initial_state = np.array([70.0, 120.0, 600.0, qwi, qxi, qyi, qzi, 0.0, 0.0, -70.0, 0.0, 0.0, 0.0])
-    setpoint      = np.array([0.0, 0.0, 49.0,   qw, qx, qy, qz, 0.0, 0.0,   0.0, 0.0, 0.0, 0.0])
+    initial_state = np.array([85.0*1.1, 160.0*1.1, 600.0, *qi, -8.5*1.1, -16.0*1.1, -70.0, 0.0, 0.0, 0.0])
+    setpoint      = np.array([0.0, 0.0, 48.0, *q, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     hover         = hover_thrust_per_engine()
     u_nominal_cart = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
     return initial_state, setpoint, u_nominal_cart

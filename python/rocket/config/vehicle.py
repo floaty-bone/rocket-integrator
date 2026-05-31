@@ -15,8 +15,8 @@ import numpy as np
 # Mass properties
 # ---------------------------------------------------------------------------
 
-VEHICLE_MASS   = 120_000.0                                # kg
-INERTIA_MATRIX = np.diag([1.2e6, 3.5e7, 3.5e7])           # kg·m² — [Ixx, Iyy, Izz]
+VEHICLE_MASS   = 300_000.0                                # kg
+INERTIA_MATRIX = np.diag([4.3e6, 1.9e8, 1.9e8])           # kg·m² — [Ixx, Iyy, Izz]
 
 
 # ---------------------------------------------------------------------------

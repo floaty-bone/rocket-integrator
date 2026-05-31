@@ -593,7 +593,7 @@ loader.load(
       }
 
       // Phase 2: engines off, freeze, attach to tower, vertical wobble
-      if (!catchPhase2Done && dist < CATCH_LAND_DIST) {
+      if (!catchPhase2Done && Math.abs(dz) < CATCH_LAND_DIST) {
         catchPhase2Done = true;
 
         // zero thrust arrows
