@@ -33,7 +33,7 @@ GRAVITY_FORCE = np.array([0.0, 0.0, -VEHICLE_MASS * GRAVITY_ACCEL],
 # ---------------------------------------------------------------------------
 
 ENGINE_CLUSTER_RADIUS = 1.5    # a — distance from rocket centreline to each engine (m)
-COM_TO_ENGINE_PLANE   = 18.0   # l — CoM-to-engine-plane distance along body X (m)
+COM_TO_ENGINE_PLANE   = 35.0   # l — CoM-to-engine-plane distance along body X (m)
 
 
 # ---------------------------------------------------------------------------

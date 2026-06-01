@@ -101,8 +101,17 @@ def _make_controller():
         a=ENGINE_CLUSTER_RADIUS,
         l=COM_TO_ENGINE_PLANE,
     )
-    Q = np.diag([1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 2e10, 2e10, 5e2, 1e8, 1e8, 1e8])
-    R = np.diag([0.8, 1.2, 1.2, 0.8, 1.2, 1.2, 0.8, 1.2, 1.2])
+    Q = np.diag([
+      # position: xy unchanged; z boosted 100× for faster altitude response
+      1e8,   1e8,   0.9e8,
+      # attitude: MUST be large — regulates inner attitude loop, kills XY cascade
+      1e12,  1e12,  1e12,
+      # velocity: xy unchanged; vz scaled with Q_z for near-critical z damping
+      1.7e8,  1.7e8,  3.6e9,
+      # angular rates: large to damp attitude oscillations
+      1e13,  1e13,  1e13,
+    ])
+    R = np.diag([4, 10, 10, 4, 10, 10, 4, 10, 10])  # unchanged
     return LQRController(F, Q=Q, R=R)
 
 
@@ -110,7 +119,7 @@ def _make_initial_conditions():
     qi = np.array([0.295413703592012, -0.702150346667812, -0.421894491949238, -0.491650965693363])   # initial quaternion [w, x, y, z]
     q  = np.array([0.364186915338164, -0.606108810937832, -0.364186915338164, -0.606108810937832])   # setpoint quaternion [w, x, y, z]
 
-    initial_state = np.array([85.0*1.1, 160.0*1.1, 600.0, *qi, -8.5*1.1, -16.0*1.1, -70.0, 0.0, 0.0, 0.0])
+    initial_state = np.array([85.0, 160.0, 600.0, *qi, -8.5, -16.0, -60.0, 0.0, 0.0, 0.0])
     setpoint      = np.array([0.0, 0.0, 48.0, *q, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     hover         = hover_thrust_per_engine()
     u_nominal_cart = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
@@ -131,7 +140,8 @@ def run_sil_simulation():
     u_nominal_gimbal = cart9_to_gimbal9(u_nominal_cart)
 
     print("Performing initial linearization...", flush=True)
-    controller.update_linearization(jnp.array(initial_state), jnp.array(u_nominal_cart))
+    x_lin = initial_state if RELINEARIZE else setpoint
+    controller.update_linearization(jnp.array(x_lin), jnp.array(u_nominal_cart))
 
     # -- Integrator --
     wrench_buf = [compute_wrench_np(gimbal9_to_cart9(u_nominal_gimbal).reshape(3, 3), a, l)]

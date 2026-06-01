@@ -4,6 +4,7 @@
 //   Plots 6-8  : Body angular rates ωx / ωy / ωz (rad/s).
 //   Plots 9-11 : Engine 1 / 2 / 3 — raw Cartesian thrust Fx / Fy / Fz (kN).
 
+
 const PAD  = { top: 18, right: 52, bottom: 20, left: 46 };
 const CW   = 400;
 const CH   = 118;
@@ -216,9 +217,11 @@ function drawEnginePlot(
   const lastA = alpha.length  ? alpha[alpha.length - 1]   : null;
   const lastB = beta.length   ? beta[beta.length - 1]     : null;
   const lastT = thrust.length ? thrust[thrust.length - 1] : null;
+  const maxA  = alpha.length  ? Math.max(...alpha.map(Math.abs))  : null;
+  const maxB  = beta.length   ? Math.max(...beta.map(Math.abs))   : null;
   legend(ctx, ph, [
-    ["#00d4ff", "α", lastA],
-    ["#55ff88", "β", lastB],
+    ["#00d4ff", `α=${lastA !== null ? lastA.toFixed(2) : "—"} mx=${maxA !== null ? maxA.toFixed(2) : "—"}`, null],
+    ["#55ff88", `β=${lastB !== null ? lastB.toFixed(2) : "—"} mx=${maxB !== null ? maxB.toFixed(2) : "—"}`, null],
     ["#ff9900", lastT !== null ? `T=${lastT.toFixed(1)}kN` : "T=—", null],
   ]);
 }
