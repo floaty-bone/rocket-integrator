@@ -248,7 +248,7 @@ export class TrajectoryPlayer {
   private _makeStatusEl(): HTMLElement {
     const el = document.createElement("div");
     el.style.cssText = `
-      position:fixed; bottom:16px; right:16px; z-index:1000;
+      position:fixed; top:64px; right:16px; z-index:1000;
       font:13px/1 monospace; color:#8ab4d4;
       background:rgba(10,12,16,0.85); border:1px solid rgba(255,255,255,0.08);
       border-radius:6px; padding:6px 12px; pointer-events:none; display:none;

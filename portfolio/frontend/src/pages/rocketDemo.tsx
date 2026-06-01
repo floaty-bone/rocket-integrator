@@ -23,7 +23,6 @@ export default function RocketDemo() {
 
   const trajectoryPlayerRef  = useRef<TrajectoryPlayer | null>(null);
   const resetCatchRef        = useRef<(() => void) | null>(null);
-  const openChopsticksRef    = useRef<(() => void) | null>(null);
   const runDemoRef           = useRef<(() => void) | null>(null);
   const [simStatus, setSimStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [simError,  setSimError]  = useState('');
@@ -34,11 +33,9 @@ export default function RocketDemo() {
   const runDemo = useCallback((): void => {
     const tp    = trajectoryPlayerRef.current;
     const reset = resetCatchRef.current;
-    const open  = openChopsticksRef.current;
-    if (!tp || !reset || !open) return;
+    if (!tp || !reset) return;
     setSimError('');
     setSimStatus('loading');
-    open();
     fetch(`${BASE}demo.json`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<SimData>; })
       .then((data) => { reset(); tp.reset(); tp.playFromData(data); setSimStatus('playing'); })
@@ -48,22 +45,23 @@ export default function RocketDemo() {
   const runSetpoint = useCallback(() => {
     const tp    = trajectoryPlayerRef.current;
     const reset = resetCatchRef.current;
-    const open  = openChopsticksRef.current;
-    if (!tp || !reset || !open) return;
+    if (!tp || !reset) return;
     const x = parseFloat(spX) || 0;
     const y = parseFloat(spY) || 0;
     const z = parseFloat(spZ) || 50;
     setSimError('');
     setSimStatus('loading');
-    open();
-    fetch(`${API_URL}/simulate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ x, y, z }),
-    })
-      .then((r) => { if (!r.ok) throw new Error(`API error ${r.status}`); return r.json() as Promise<SimData>; })
-      .then((data) => { reset(); tp.reset(); tp.playFromData(data); setSimStatus('playing'); })
-      .catch((e) => { setSimStatus('error'); setSimError(String(e)); });
+
+    // Derive WS URL from API_URL (https→wss, http→ws)
+    const wsBase = API_URL.replace(/^https/, 'wss').replace(/^http/, 'ws');
+    const wsUrl  = `${wsBase}/ws/simulate?x=${x}&y=${y}&z=${z}`;
+
+    reset();
+    tp.reset();
+    // Surface any connection error in the control panel
+    tp.onComplete = () => setSimStatus('idle');
+    tp.connect(wsUrl);
+    setSimStatus('playing');
   }, [spX, spY, spZ]);
 
   useEffect(() => { runDemoRef.current = runDemo; }, [runDemo]);
@@ -465,9 +463,8 @@ export default function RocketDemo() {
       trajectoryPlayer.onFrame = (t, pos, eng, omega, u_cart) => livePlots.addFrame(t, pos, eng, omega, u_cart);
       trajectoryPlayer.thrustArrows = thrustArrows;
       trajectoryPlayer.thrustRefN   = THRUST_REF_N;
-      trajectoryPlayerRef.current  = trajectoryPlayer;
-      resetCatchRef.current        = resetCatchSequence;
-      openChopsticksRef.current    = openChopsticks;
+      trajectoryPlayerRef.current = trajectoryPlayer;
+      resetCatchRef.current       = resetCatchSequence;
 
       // ── Catch sequence checker @ 5 Hz ──────────────────────────────────────
       const catchIntervalId = setInterval(() => {

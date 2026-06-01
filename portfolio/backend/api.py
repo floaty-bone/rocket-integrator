@@ -11,15 +11,15 @@ sys.path is patched below so it's importable from any working directory.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
-# <repo>/python/ — works regardless of CWD (important for Render)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "python"))
 
 import jax.numpy as jnp
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -37,23 +37,14 @@ from rocket.plant.thrust import compute_thrust_forces_and_moments_cartesian_np a
 from rocket.plant.tvc import cart9_to_gimbal9, gimbal9_to_cart9
 from rocket.integration.integrator import RK4Integrator
 
-# ── Simulation constants ───────────────────────────────────────────────────────
-SIM_TIME    = 20.0        # shorter than sil_hover to fit free-tier request limits
-SIM_FREQ    = 5000        # Hz
-STEP_SIZE   = 1.0 / SIM_FREQ
-SAMPLE_RATE = int(SIM_FREQ / 50)   # 50 Hz output frames
-
-# Attitude setpoint quaternion [w, x, y, z] — upright hover orientation
-_Q_SETPOINT = np.array([
-    0.364186915338164, -0.606108810937832,
-   -0.364186915338164, -0.606108810937832,
-])
-
-# Initial attitude — tilted (same as sil_hover for a visible correction manoeuvre)
-_Q_INITIAL = np.array([
-    0.295413703592012, -0.702150346667812,
-   -0.421894491949238, -0.491650965693363,
-])
+# Import scenario constants and controller factory from sil_hover
+from rocket.scenarios.sil_hover import (
+    SIM_TIME,
+    STEP_SIZE,
+    SAMPLE_RATE,
+    _make_controller,
+    _make_initial_conditions,
+)
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Rocket Sim API")
@@ -66,51 +57,33 @@ app.add_middleware(
 )
 
 
-class SetpointRequest(BaseModel):
-    x: float = Field(default=0.0, ge=-300.0, le=300.0, description="Target X position (m)")
-    y: float = Field(default=0.0, ge=-300.0, le=300.0, description="Target Y position (m)")
-    z: float = Field(default=50.0, ge=5.0,   le=500.0, description="Target altitude (m)")
+# ── Shared simulation logic ────────────────────────────────────────────────────
+
+# Attitude setpoint quaternion [w, x, y, z] — upright hover orientation
+_Q_SETPOINT = np.array([
+    0.364186915338164, -0.606108810937832,
+   -0.364186915338164, -0.606108810937832,
+])
 
 
-@app.get("/")
-def health():
-    return {"status": "ok"}
-
-
-@app.post("/simulate")
-def simulate(req: SetpointRequest):
+def _run_simulation(x: float, y: float, z: float) -> tuple[dict, list[dict]]:
     """
-    Run a closed-loop LQR hover simulation and return the full trajectory.
+    Run the full closed-loop SIL simulation with the given position setpoint.
 
-    Initial position is [0, 0, 0] with a tilted attitude.
-    The controller drives the vehicle to the requested [x, y, z] setpoint.
+    Uses sil_hover initial conditions (rocket descending from altitude) so the
+    animation shows the vehicle flying in, correcting attitude, and landing.
+
+    Returns (meta_dict, frame_list) — ready to JSON-encode.
     """
     a, l = ENGINE_CLUSTER_RADIUS, COM_TO_ENGINE_PLANE
 
-    # Controller
-    F = make_F(
-        mass=VEHICLE_MASS,
-        inertia_matrix=INERTIA_MATRIX,
-        gravity_force=GRAVITY_FORCE,
-        a=a, l=l,
-    )
-    Q = np.diag([
-        1e8,  1e8,  0.9e8,
-        1e12, 1e12, 1e12,
-        1.7e8, 1.7e8, 3.6e9,
-        1e13, 1e13, 1e13,
-    ])
-    R = np.diag([4, 10, 10, 4, 10, 10, 4, 10, 10])
-    controller = LQRController(F, Q=Q, R=R)
+    controller = _make_controller()
 
-    # Initial state: position [0,0,0], tilted attitude, zero velocities
-    initial_state = np.array([0.0, 0.0, 0.0, *_Q_INITIAL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    setpoint      = np.array([req.x, req.y, req.z, *_Q_SETPOINT, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    # Pull initial state from sil_hover; override setpoint position with user values.
+    initial_state, _default_sp, u_nominal_cart = _make_initial_conditions()
+    setpoint = np.array([x, y, z, *_Q_SETPOINT, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-    hover = hover_thrust_per_engine()
-    u_nominal_cart   = np.array([hover, 0, 0, hover, 0, 0, hover, 0, 0])
     u_nominal_gimbal = cart9_to_gimbal9(u_nominal_cart)
-
     controller.update_linearization(jnp.array(setpoint), jnp.array(u_nominal_cart))
 
     wrench_buf = [compute_wrench_np(gimbal9_to_cart9(u_nominal_gimbal).reshape(3, 3), a, l)]
@@ -135,7 +108,7 @@ def simulate(req: SetpointRequest):
     trajectory[0], u_history[0], ucart_history[0] = state, u_gimbal, u_cart
 
     t_next_ctrl = 0.0
-    ctrl_period = STEP_SIZE   # CONTROL_FREQ == SIM_FREQ
+    ctrl_period = STEP_SIZE
     frame_idx   = 1
 
     for step_idx in range(1, n_steps):
@@ -160,6 +133,14 @@ def simulate(req: SetpointRequest):
     dt         = STEP_SIZE * SAMPLE_RATE
     total_time = round(frame_idx * dt, 3)
 
+    meta = {
+        "type":       "meta",
+        "n_frames":   frame_idx,
+        "dt":         round(float(dt), 6),
+        "total_time": total_time,
+        "setpoint":   [round(float(x), 4), round(float(y), 4), round(float(z), 4)],
+    }
+
     frames = []
     for i in range(frame_idx):
         s  = trajectory[i]
@@ -177,7 +158,7 @@ def simulate(req: SetpointRequest):
                 [round(float(u[3]), 6), round(float(u[4]), 6), round(float(u[5]), 1)],
                 [round(float(u[6]), 6), round(float(u[7]), 6), round(float(u[8]), 1)],
             ],
-            "omega":  [round(float(s[10]), 6), round(float(s[11]), 6), round(float(s[12]), 6)],
+            "omega": [round(float(s[10]), 6), round(float(s[11]), 6), round(float(s[12]), 6)],
             "u_cart": [
                 [round(float(uc[0]), 1), round(float(uc[1]), 1), round(float(uc[2]), 1)],
                 [round(float(uc[3]), 1), round(float(uc[4]), 1), round(float(uc[5]), 1)],
@@ -185,13 +166,81 @@ def simulate(req: SetpointRequest):
             ],
         })
 
-    return {
-        "meta": {
-            "type":       "meta",
-            "n_frames":   frame_idx,
-            "dt":         round(float(dt), 6),
-            "total_time": total_time,
-            "setpoint":   [round(float(req.x), 4), round(float(req.y), 4), round(float(req.z), 4)],
-        },
-        "frames": frames,
-    }
+    return meta, frames
+
+
+# ── HTTP endpoints ─────────────────────────────────────────────────────────────
+
+@app.get("/")
+def health():
+    return {"status": "ok"}
+
+
+class SetpointRequest(BaseModel):
+    x: float = Field(default=0.0, ge=-300.0, le=300.0)
+    y: float = Field(default=0.0, ge=-300.0, le=300.0)
+    z: float = Field(default=50.0, ge=5.0,   le=500.0)
+
+
+@app.post("/simulate")
+def simulate(req: SetpointRequest):
+    """Run simulation and return complete trajectory as JSON."""
+    meta, frames = _run_simulation(req.x, req.y, req.z)
+    return {"meta": meta, "frames": frames}
+
+
+# ── WebSocket endpoint ─────────────────────────────────────────────────────────
+
+@app.websocket("/ws/simulate")
+async def ws_simulate(
+    websocket: WebSocket,
+    x: float = 0.0,
+    y: float = 0.0,
+    z: float = 50.0,
+):
+    """
+    Stream simulation frames in real time over WebSocket.
+
+    Connect to: ws://<host>/ws/simulate?x=0&y=0&z=50
+
+    Protocol (identical to ws_server.py):
+      1. Server sends meta JSON  {"type":"meta", "n_frames":..., "dt":..., ...}
+      2. Server sends one frame JSON per sample, paced to wall-clock real time.
+    """
+    await websocket.accept()
+
+    # Clamp to valid ranges
+    x = max(-300.0, min(300.0, x))
+    y = max(-300.0, min(300.0, y))
+    z = max(5.0,    min(500.0, z))
+
+    # Run CPU-bound simulation in a thread so the event loop stays responsive
+    loop = asyncio.get_event_loop()
+    try:
+        meta, frames = await loop.run_in_executor(None, _run_simulation, x, y, z)
+    except Exception as exc:
+        await websocket.close(code=1011, reason=str(exc))
+        return
+
+    dt = meta["dt"]
+
+    try:
+        await websocket.send_json(meta)
+
+        start = loop.time()
+        for i, frame in enumerate(frames):
+            await websocket.send_json(frame)
+
+            # Pace delivery to match real time so the frontend animation is smooth
+            next_deadline = start + (i + 1) * dt
+            remaining = next_deadline - loop.time()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
