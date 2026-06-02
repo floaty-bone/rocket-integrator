@@ -39,6 +39,7 @@ const ExperienceEducationPage = () => {
       <div className="fixed inset-0 z-0">
         <RippleMesh className="w-full h-full" />
       </div>
+      <div className="fixed inset-0 z-0" style={{ background: 'rgba(6,6,10,0.75)' }} />
 
       {/* Navigation - identical to main page */}
       <nav className={`fixed w-full z-50 transition-all duration-500 ${scrollPosition > 50

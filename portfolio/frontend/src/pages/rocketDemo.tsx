@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -19,7 +19,6 @@ const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'https:/
 
 export default function RocketDemo() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
 
   const trajectoryPlayerRef  = useRef<TrajectoryPlayer | null>(null);
   const resetCatchRef        = useRef<(() => void) | null>(null);
@@ -33,6 +32,8 @@ export default function RocketDemo() {
   const lastLiveSetpointRef     = useRef<[number, number, number]>([0, 0, 48]);
   const savedFrameRef           = useRef<import('../rocket/trajectory_player').SimFrame | null>(null);
   const livePlotsRef            = useRef<LivePlots | null>(null);
+  const animateCameraToRef      = useRef<((pos: [number,number,number], target: [number,number,number], ms?: number) => void) | null>(null);
+  const hasSimulatedRef         = useRef(false);
   const [sceneReady, setSceneReady] = useState(false);
   const [simStatus, setSimStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [simError,  setSimError]  = useState('');
@@ -52,7 +53,21 @@ export default function RocketDemo() {
     setTowerVisibilityRef.current?.(true);
     fetch(`${BASE}landing.json`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<SimData>; })
-      .then((data) => { reset(); tp.reset(); tp.playFromData(data); setSimStatus('playing'); })
+      .then((data) => {
+        reset(); tp.reset();
+        if (!hasSimulatedRef.current) {
+          hasSimulatedRef.current = true;
+          const delay = 1800;
+          animateCameraToRef.current?.(
+            [783213.69, 98589.40, -2094.49],
+            [13775.86, 251592.34, -515.61],
+            delay,
+          );
+          setTimeout(() => { tp.playFromData(data); setSimStatus('playing'); }, delay);
+        } else {
+          tp.playFromData(data); setSimStatus('playing');
+        }
+      })
       .catch((e) => { setSimStatus('error'); setSimError(String(e)); });
   }, []);
 
@@ -198,7 +213,7 @@ export default function RocketDemo() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.minDistance = 2;
+controls.minDistance = 2;
     controls.maxDistance = 1000;
     controls.maxPolarAngle = Math.PI;
 
@@ -432,11 +447,11 @@ export default function RocketDemo() {
       const model = gltf.scene;
       model.rotation.z = BOOSTER.rotationZ;
 
-      const steel = new THREE.MeshStandardMaterial({
-        color: 0x6a7075, roughness: 0.45, metalness: 0.75, envMapIntensity: 1.2,
+      const steel = new THREE.MeshLambertMaterial({
+        color: 0x6a7075,
       });
-      const engineBlack = new THREE.MeshStandardMaterial({
-        color: 0x080808, roughness: 0.95, metalness: 0.1, envMapIntensity: 0.1,
+      const engineBlack = new THREE.MeshLambertMaterial({
+        color: 0x080808,
       });
 
       model.updateMatrixWorld(true);
@@ -451,7 +466,8 @@ export default function RocketDemo() {
           meshBox.setFromObject(child);
           const centerY = (meshBox.min.y + meshBox.max.y) / 2;
           (child as THREE.Mesh).material = centerY < engineThreshold ? engineBlack : steel;
-          (child as THREE.Mesh).castShadow = true;
+          (child as THREE.Mesh).castShadow = false;
+          (child as THREE.Mesh).receiveShadow = false;
         }
       });
 
@@ -479,9 +495,9 @@ export default function RocketDemo() {
       const radius = size.length() / 2;
       const fov    = (camera.fov * Math.PI) / 180;
       const dist   = (radius / Math.sin(fov / 2)) * 1.5;
-      camera.position.set(dist * 0.6, dist * 0.5, dist * 0.8);
-      camera.lookAt(0, size.y / 2, 0);
-      controls.target.set(0, size.y / 2, 0);
+      camera.position.set(228329.07, 79901.72, 3450.99);
+      camera.lookAt(2983.92, 84485.80, 3912.83);
+      controls.target.set(2983.92, 84485.80, 3912.83);
 
       camera.near = dist * 0.001;
       camera.far  = dist * 20;
@@ -490,7 +506,7 @@ export default function RocketDemo() {
       controls.maxDistance = dist * 8;
       controls.update();
 
-      const gridSize = radius * 30;
+      const gridSize = radius * 17.3;
       const fine     = Math.round(gridSize / radius) * 10;
       scene.add(makeGrid(gridSize, fine, 0x555555, 0.5, 0));
       scene.add(makeGrid(gridSize, Math.round(fine / 10), 0x777777, 0.85, 0));
@@ -515,7 +531,7 @@ export default function RocketDemo() {
       sun.shadow.camera.updateProjectionMatrix();
 
       // ── Grid fins ──────────────────────────────────────────────────────────
-      const finMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 1.0, metalness: 0.0 });
+      const finMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
       const FIN_TRANSFORMS: [number, number, number, number, number, number][] = [
         [    0, 65860.3,  4520, -Math.PI / 2, Math.PI,            0],
         [-4520, 65860.0,     0, -Math.PI / 2, Math.PI, Math.PI / 2],
@@ -527,7 +543,8 @@ export default function RocketDemo() {
           fin.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
               (child as THREE.Mesh).material = finMat;
-              (child as THREE.Mesh).castShadow = true;
+              (child as THREE.Mesh).castShadow = false;
+              (child as THREE.Mesh).receiveShadow = false;
             }
           });
           fin.position.copy(toModelLocal(px, py, pz));
@@ -537,15 +554,15 @@ export default function RocketDemo() {
       });
 
       // ── Engines ────────────────────────────────────────────────────────────
-      const engMat = new THREE.MeshStandardMaterial({ color: 0x7a3010, roughness: 0.8, metalness: 0.2, envMapIntensity: 0.6 });
+      const engMat = new THREE.MeshLambertMaterial({ color: 0x7a3010 });
       ENGINE_TRANSFORMS.forEach(([px, py, pz, rx, ry, rz], i) => {
         loader.load(`${BASE}models/engine.glb`, (gltfEng) => {
           const eng = gltfEng.scene;
           eng.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
               (child as THREE.Mesh).material = engMat;
-              (child as THREE.Mesh).castShadow = true;
-              (child as THREE.Mesh).receiveShadow = true;
+              (child as THREE.Mesh).castShadow = false;
+              (child as THREE.Mesh).receiveShadow = false;
             }
           });
           eng.position.z = ENGINE_GIMBAL_OFFSET_Z;
@@ -672,18 +689,41 @@ export default function RocketDemo() {
     document.body.appendChild(fpsEl);
     let fpsFrames = 0, fpsLast = performance.now();
 
+    // ── Camera fly-to ─────────────────────────────────────────────────────────
+    type CamAnim = { fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; startMs: number; durationMs: number } | null;
+    let camAnim: CamAnim = null;
+    animateCameraToRef.current = (pos, target, ms = 1800) => {
+      camAnim = {
+        fromPos:    camera.position.clone(),
+        toPos:      new THREE.Vector3(...pos),
+        fromTarget: controls.target.clone(),
+        toTarget:   new THREE.Vector3(...target),
+        startMs:    performance.now(),
+        durationMs: ms,
+      };
+    };
+
     // ── Animate ───────────────────────────────────────────────────────────────
     let rafId = 0;
     function animate() {
       rafId = requestAnimationFrame(animate);
+
+      if (camAnim) {
+        const t = Math.min((performance.now() - camAnim.startMs) / camAnim.durationMs, 1);
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease-in-out quad
+        camera.position.lerpVectors(camAnim.fromPos, camAnim.toPos, ease);
+        controls.target.lerpVectors(camAnim.fromTarget, camAnim.toTarget, ease);
+        if (t >= 1) camAnim = null;
+      }
+
       controls.update();
       tickModuleAnims();
       trajectoryPlayer?.tick();
-      livePlots.render();
       tickChopstick(leftChopstick,  leftChopstickBaseQ,  leftChopAngleDeg,  leftOsc,  leftOscX,   1, -8,  60);
       tickChopstick(rightChopstick, rightChopstickBaseQ, rightChopAngleDeg, rightOsc, rightOscX, -1, -60,  8);
       tickTransOscillation(connTransOsc, chopConnector);
       renderer.render(scene, camera);
+      livePlots.render();
       fpsFrames++;
       const now = performance.now();
       if (now - fpsLast >= 500) {
@@ -754,12 +794,17 @@ export default function RocketDemo() {
         </div>
       )}
 
-      {/* Back link */}
-      <Link to="/downloadsPage"
-        style={{ position: 'absolute', top: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 50 }}
-        className="text-xs font-light tracking-widest text-white/40 hover:text-[#9F8E6D] uppercase whitespace-nowrap">
-        ← Back to Portfolio
-      </Link>
+{/* Back link + study link */}
+      <div style={{ position: 'absolute', top: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'flex', gap: '32px', alignItems: 'center' }}>
+        <Link to="/downloadsPage"
+          className="text-xs font-light tracking-widest text-white/40 hover:text-[#9F8E6D] uppercase whitespace-nowrap">
+          ← Back to Portfolio
+        </Link>
+        <Link to="/downloadsPage#lqr" state={{ openSection: 'lqr' }}
+          className="text-xs font-light tracking-widest text-white/40 hover:text-[#9F8E6D] uppercase whitespace-nowrap">
+          Personal Study — LQR & 6-DOF Body Integrator →
+        </Link>
+      </div>
 
       {/* Control panel — bottom right */}
       <div style={{
@@ -776,11 +821,16 @@ export default function RocketDemo() {
           onClick={runDemo}
           disabled={isLoading}
           style={{ ...btnBase, borderColor: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.85)', opacity: isLoading ? 0.4 : 1 }}
+          onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'; } }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
         >
           Simulate Landing
         </button>
-        <div style={{ fontSize: '9px', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.40)', textAlign: 'center', marginTop: '6px', marginBottom: '16px', fontWeight: 300 }}>
+        <div style={{ fontSize: '9px', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.55)', textAlign: 'center', marginTop: '6px', fontWeight: 400 }}>
           or press Space
+        </div>
+        <div style={{ fontSize: '9px', letterSpacing: '0.10em', color: 'rgba(159,142,109,0.8)', textAlign: 'center', marginTop: '5px', marginBottom: '16px', fontWeight: 400 }}>
+          scroll to zoom out if rocket isn't visible
         </div>
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginBottom: '16px' }} />
@@ -805,6 +855,8 @@ export default function RocketDemo() {
           onClick={runSetpoint}
           disabled={isLoading}
           style={{ ...btnBase, borderColor: 'rgba(159,142,109,0.40)', color: '#9F8E6D', opacity: isLoading ? 0.4 : 1 }}
+          onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(159,142,109,0.10)'; e.currentTarget.style.borderColor = 'rgba(159,142,109,0.70)'; } }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'rgba(159,142,109,0.40)'; }}
         >
           {isLoading ? 'Running…' : 'Go to Setpoint'}
         </button>

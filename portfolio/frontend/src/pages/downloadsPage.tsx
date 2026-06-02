@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Linkedin, ChevronRight, ChevronLeft, ExternalLink } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Download, Linkedin, ChevronRight, ExternalLink } from 'lucide-react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import RippleMesh from '../components/RippleMesh';
@@ -38,15 +38,6 @@ function Outcome({ accent, title, children }: { accent: string; title: string; c
     <div className="rounded-lg p-4 mt-5" style={{ background: `${accent}12`, border: `1px solid ${accent}40` }}>
       <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: accent }}>{title}</p>
       <div className="text-sm text-gray-300 leading-relaxed space-y-1">{children}</div>
-    </div>
-  );
-}
-
-function Note({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg p-4 mt-4 bg-white/5 border border-white/15">
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-2">Note</p>
-      <div className="text-sm text-gray-300 leading-relaxed">{children}</div>
     </div>
   );
 }
@@ -105,43 +96,10 @@ function FigRow({ items }: { items: { src: string; caption?: string }[] }) {
 
 // ─── Image gallery (used where LaTeX had multiple figures in a section) ────────
 
-function Gallery({ images, captions }: { images: string[]; captions?: string[] }) {
-  const [idx, setIdx] = useState(0);
-  if (images.length === 0) return null;
-  const caption = captions?.[idx];
-  return (
-    <div className="my-4">
-      <div className="relative rounded-md overflow-hidden bg-black/30 border border-white/10" style={{ minHeight: '180px' }}>
-        <img src={images[idx]} alt={caption ?? ''} className="w-full h-auto object-contain max-h-80" />
-        {images.length > 1 && (
-          <>
-            <button onClick={() => setIdx((i) => (i - 1 + images.length) % images.length)}
-              className="absolute left-2 top-1/2 -translate-y-1/2 p-1 rounded-full bg-black/60 hover:bg-black/80">
-              <ChevronLeft className="w-4 h-4 text-white" />
-            </button>
-            <button onClick={() => setIdx((i) => (i + 1) % images.length)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full bg-black/60 hover:bg-black/80">
-              <ChevronRight className="w-4 h-4 text-white" />
-            </button>
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
-              {images.map((_, i) => (
-                <button key={i} onClick={() => setIdx(i)}
-                  className="w-1.5 h-1.5 rounded-full transition-colors"
-                  style={{ background: i === idx ? '#9F8E6D' : 'rgba(255,255,255,0.35)' }} />
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-      {caption && <p className="text-xs text-gray-500 mt-1.5 italic">{caption}</p>}
-    </div>
-  );
-}
-
 // ─── Major section (top-level accordion) ─────────────────────────────────────
 
-function MajorSection({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function MajorSection({ title, children, initialOpen }: { title: string; children: React.ReactNode; initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen ?? false);
   return (
     <div className="border rounded-xl overflow-hidden transition-colors duration-300"
       style={{ borderColor: open ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.09)', background: open ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.01)' }}>
@@ -158,13 +116,13 @@ function MajorSection({ title, children }: { title: string; children: React.Reac
 // ─── Sub-section (nested accordion inside a MajorSection) ────────────────────
 
 function SubSection({
-  label, title, accent, children,
+  label, title, accent, children, id, initialOpen,
 }: {
-  label: string; title: string; accent: string; children: React.ReactNode;
+  label: string; title: string; accent: string; children: React.ReactNode; id?: string; initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen ?? false);
   return (
-    <div className="border rounded-lg overflow-hidden transition-colors duration-300"
+    <div id={id} className="border rounded-lg overflow-hidden transition-colors duration-300"
       style={{ borderColor: open ? `${accent}45` : 'rgba(255,255,255,0.08)', background: open ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
       <button className="w-full flex items-center justify-between px-6 py-5 text-left" onClick={() => setOpen(o => !o)}>
         <div>
@@ -1020,8 +978,28 @@ T     &= \\sqrt{F_x^2+F_y^2+F_z^2} \\\\
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const DownloadsPage = () => {
+  const location = useLocation();
+  // Section to auto-open + scroll to. Supports either navigation state
+  // (Link state={{ openSection: 'lqr' }}) or a #lqr hash in the URL.
+  const openSection = (location.state as { openSection?: string } | null)?.openSection
+    || location.hash.replace('#', '');
   const [scrollPosition, setScrollPosition] = useState(0);
   const [navVisible, setNavVisible] = useState(true);
+
+  useEffect(() => {
+    if (!openSection) return;
+    // The target section (KaTeX equations + images) reflows for ~1s after mount,
+    // so a single scroll lands in the wrong place. Re-correct over time instead.
+    const navOffset = 96; // fixed navbar height
+    const scrollToTarget = () => {
+      const el = document.getElementById(openSection);
+      if (!el) return;
+      const top = el.getBoundingClientRect().top + window.pageYOffset - navOffset;
+      window.scrollTo({ top, behavior: 'smooth' });
+    };
+    const timers = [60, 250, 500, 900, 1400].map(d => setTimeout(scrollToTarget, d));
+    return () => timers.forEach(clearTimeout);
+  }, [openSection]);
 
   useEffect(() => {
     let lastScroll = 0;
@@ -1083,8 +1061,8 @@ const DownloadsPage = () => {
         </div>
 
         <div className="mt-12 space-y-4">
-          <MajorSection title="Personal Projects">
-            <SubSection label="Personal Study" title="LQR Full-State Feedback Control & 6-DOF Rocket Integrator" accent="#9F8E6D">
+          <MajorSection title="Personal Projects" initialOpen={openSection === 'lqr'}>
+            <SubSection label="Personal Study" title="LQR Full-State Feedback Control & 6-DOF Body Integrator" accent="#9F8E6D" id="lqr" initialOpen={openSection === 'lqr'}>
               <LQRContent />
             </SubSection>
             <SubSection label="Personal Study" title="Failure Prediction of the Starship Tank" accent="#9F8E6D">

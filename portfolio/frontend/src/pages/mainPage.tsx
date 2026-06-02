@@ -46,6 +46,7 @@ const HomePage = () => {
       <div className="fixed inset-0 z-0">
         <RippleMesh className="w-full h-full" />
       </div>
+      <div className="fixed inset-0 z-0" style={{ background: 'rgba(6,6,10,0.75)' }} />
 
       {/* Navigation */}
       <nav className={`fixed w-full z-50 transition-all duration-500 ${scrollPosition > 50
@@ -78,9 +79,9 @@ const HomePage = () => {
             <br /><br />
             Graduate mechanical engineer from Grenoble INP, Product Engineering specialization (IdP). Multidisciplinary training covering the full product development cycle: from conceptualization to physical prototyping, including CAD modeling, numerical simulation, and control systems.
           </p>
-          <Link to="/competencesPage"
+          <Link to="/downloadsPage"
             className="group flex items-center gap-2 text-lg hover:text-[#9F8E6D] transition-all duration-300">
-            My Skills
+            Technical Portfolio
             <ChevronRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform duration-300" />
           </Link>
         </div>

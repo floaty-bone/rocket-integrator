@@ -279,7 +279,7 @@ export class LivePlots {
   private _buildPanel(): void {
     const wrapper = document.createElement("div");
     this._wrapperEl = wrapper;
-    wrapper.style.cssText = "position:fixed;top:20px;left:20px;z-index:1000;font:400 12px/1.6 inherit;color:rgba(255,255,255,0.85);";
+    wrapper.style.cssText = "position:fixed;top:20px;left:20px;z-index:1000;font:400 12px/1.6 inherit;color:rgba(255,255,255,0.85);transform:translateZ(0);contain:layout paint;will-change:transform;";
 
     const titleBar = document.createElement("div");
     titleBar.style.cssText = "display:flex;align-items:center;justify-content:space-between;background:rgba(8,9,12,0.82);border:1px solid rgba(255,255,255,0.08);border-radius:10px 10px 0 0;padding:10px 16px;cursor:pointer;user-select:none;";
@@ -291,7 +291,7 @@ export class LivePlots {
     titleBar.appendChild(titleText); titleBar.appendChild(chevron);
 
     const body = document.createElement("div");
-    body.style.cssText = "background:rgba(8,9,12,0.82);border:1px solid rgba(255,255,255,0.08);border-top:none;border-radius:0 0 10px 10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;max-height:90vh;overflow-y:auto;will-change:transform;";
+    body.style.cssText = "background:rgba(8,9,12,0.82);border:1px solid rgba(255,255,255,0.08);border-top:none;border-radius:0 0 10px 10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;max-height:80vh;overflow-y:scroll;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;";
 
     const dpr = window.devicePixelRatio || 1;
     for (let i = 0; i < 7; i++) {
@@ -304,6 +304,10 @@ export class LivePlots {
       this.ctxs.push(ctx);
     }
 
+    // Stop wheel events from reaching OrbitControls underneath
+    body.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: false });
+    body.addEventListener("touchmove", (e) => { e.stopPropagation(); }, { passive: false });
+
     body.style.display = "none";
     chevron.style.transform = "rotate(180deg)";
     titleBar.addEventListener("click", () => {
@@ -312,6 +316,8 @@ export class LivePlots {
       chevron.style.transform = this._collapsed ? "rotate(180deg)" : "";
       if (!this._collapsed) { this._dirty = true; this._lastRender = 0; this.render(); }
     });
+
+    wrapper.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: false });
 
     wrapper.appendChild(titleBar); wrapper.appendChild(body);
     document.body.appendChild(wrapper);
