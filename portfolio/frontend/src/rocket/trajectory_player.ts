@@ -99,6 +99,16 @@ export class TrajectoryPlayer {
     ws.onclose   = () => { if (this.ws !== ws) return; if (this.meta) this._setStatus(`Complete  (${this.meta.total_time.toFixed(1)} s)`, 4000); this.ws = null; };
   }
 
+  get isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /** Send a new setpoint to the backend without restarting the simulation. */
+  sendSetpoint(x: number, y: number, z: number): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ type: 'setpoint', x, y, z }));
+  }
+
   disconnect(): void {
     this.ws?.close(); this.ws = null;
     this._clearData();
@@ -131,13 +141,23 @@ export class TrajectoryPlayer {
     this.statusEl.style.display = "none";
   }
 
+  /** Like reset() but leaves the booster at its current visual position. */
+  resetKeepPosition(): void {
+    this._clearData();
+    this.meta = null; this.frameA = null; this.frameB = null;
+    this.frozen = false;
+    this._initTrail();
+    this.statusEl.style.display = "none";
+  }
+
   /** Call from React useEffect cleanup to remove DOM elements. */
   dispose(): void {
     this.disconnect();
     if (this.statusEl.parentNode) this.statusEl.parentNode.removeChild(this.statusEl);
   }
 
-  get latestPos(): [number, number, number] | null { return this.frameB?.pos ?? null; }
+  get latestPos():   [number, number, number] | null { return this.frameB?.pos  ?? null; }
+  get latestFrame(): SimFrame | null                 { return this.frameB          ?? null; }
 
   tick(): void {
     if (this.frozen) return;

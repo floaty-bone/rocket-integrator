@@ -24,11 +24,20 @@ export default function RocketDemo() {
   const trajectoryPlayerRef  = useRef<TrajectoryPlayer | null>(null);
   const resetCatchRef        = useRef<(() => void) | null>(null);
   const runDemoRef           = useRef<(() => void) | null>(null);
+  const catchEnabledRef         = useRef(false);
+  const setTowerVisibilityRef   = useRef<((v: boolean) => void) | null>(null);
+  const fadeTowerOutRef         = useRef<(() => void) | null>(null);
+  const isFirstSetpointRef      = useRef(true);
+  const pendingSetpointRef      = useRef<[number, number, number] | null>(null);
+  const lastSetpointClickRef    = useRef(0);
+  const lastLiveSetpointRef     = useRef<[number, number, number]>([0, 0, 48]);
+  const savedFrameRef           = useRef<import('../rocket/trajectory_player').SimFrame | null>(null);
+  const livePlotsRef            = useRef<LivePlots | null>(null);
   const [simStatus, setSimStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [simError,  setSimError]  = useState('');
   const [spX, setSpX] = useState('0');
   const [spY, setSpY] = useState('0');
-  const [spZ, setSpZ] = useState('50');
+  const [spZ, setSpZ] = useState('48');
 
   const runDemo = useCallback((): void => {
     const tp    = trajectoryPlayerRef.current;
@@ -36,11 +45,18 @@ export default function RocketDemo() {
     if (!tp || !reset) return;
     setSimError('');
     setSimStatus('loading');
-    fetch(`${BASE}demo.json`)
+    // Disconnect any live sim before playing the canned demo
+    tp.disconnect();
+    catchEnabledRef.current = true;
+    setTowerVisibilityRef.current?.(true);
+    fetch(`${BASE}landing.json`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<SimData>; })
       .then((data) => { reset(); tp.reset(); tp.playFromData(data); setSimStatus('playing'); })
       .catch((e) => { setSimStatus('error'); setSimError(String(e)); });
   }, []);
+
+  const isDefaultSetpoint = (x: number, y: number, z: number) =>
+    Math.abs(x) < 0.01 && Math.abs(y) < 0.01 && Math.abs(z - 48) < 0.01;
 
   const runSetpoint = useCallback(() => {
     const tp    = trajectoryPlayerRef.current;
@@ -49,22 +65,97 @@ export default function RocketDemo() {
     const x = parseFloat(spX) || 0;
     const y = parseFloat(spY) || 0;
     const z = parseFloat(spZ) || 50;
+
+    lastSetpointClickRef.current = Date.now();
+    catchEnabledRef.current = false;
+
+    // If already in a live WS session, just hot-swap the setpoint
+    if (tp.isConnected) {
+      reset();
+      tp.sendSetpoint(x, y, z);
+      lastLiveSetpointRef.current = [x, y, z];
+      return;
+    }
+
     setSimError('');
     setSimStatus('loading');
 
-    // Derive WS URL from API_URL (https→wss, http→ws)
-    const wsBase = API_URL.replace(/^https/, 'wss').replace(/^http/, 'ws');
-    const wsUrl  = `${wsBase}/ws/simulate?x=${x}&y=${y}&z=${z}`;
+    const saved = savedFrameRef.current;
+    savedFrameRef.current = null;
 
+    if (saved) {
+      // Resume: booster stays where it is — no fade, no position reset
+      reset();
+      tp.resetKeepPosition();
+      const wsBase = API_URL.replace(/^https/, 'wss').replace(/^http/, 'ws');
+      lastLiveSetpointRef.current = [x, y, z];
+      const [qw, qx, qy, qz] = saved.quat;
+      const [px, py, pz] = saved.pos;
+      const params = `x=${x}&y=${y}&z=${z}&ix=${px}&iy=${py}&iz=${pz}&iqw=${qw}&iqx=${qx}&iqy=${qy}&iqz=${qz}`;
+      tp.connect(`${wsBase}/ws/simulate?${params}`);
+      setSimStatus('playing');
+      return;
+    }
+
+    fadeTowerOutRef.current?.();
     reset();
     tp.reset();
-    // Surface any connection error in the control panel
-    tp.onComplete = () => setSimStatus('idle');
-    tp.connect(wsUrl);
+
+    // Default setpoint → play from pre-baked static JSON, no backend needed
+    if (isDefaultSetpoint(x, y, z)) {
+      fetch(`${BASE}landing.json`)
+        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<SimData>; })
+        .then((data) => { tp.playFromData(data); setSimStatus('playing'); })
+        .catch((e) => { setSimStatus('error'); setSimError(String(e)); });
+      return;
+    }
+
+    // Custom setpoint → live WS
+    const wsBase = API_URL.replace(/^https/, 'wss').replace(/^http/, 'ws');
+    lastLiveSetpointRef.current = [x, y, z];
+    if (isFirstSetpointRef.current) {
+      isFirstSetpointRef.current = false;
+      pendingSetpointRef.current = [x, y, z];
+      tp.connect(`${wsBase}/ws/simulate?x=0&y=0&z=20`);
+    } else {
+      tp.connect(`${wsBase}/ws/simulate?x=${x}&y=${y}&z=${z}`);
+    }
     setSimStatus('playing');
   }, [spX, spY, spZ]);
 
   useEffect(() => { runDemoRef.current = runDemo; }, [runDemo]);
+
+  // Pad-clear handoff + 1-min idle disconnect
+  useEffect(() => {
+    const checkId = setInterval(() => {
+      const tp = trajectoryPlayerRef.current;
+
+      // Once booster clears the pad (z ≥ 15 m), send the user's actual setpoint
+      if (pendingSetpointRef.current && tp) {
+        const pos = tp.latestPos;
+        if (pos && pos[2] >= 15) {
+          const [px, py, pz] = pendingSetpointRef.current;
+          pendingSetpointRef.current = null;
+          tp.sendSetpoint(px, py, pz);
+          lastLiveSetpointRef.current = [px, py, pz];
+        }
+      }
+
+      // 1 min since last "Go to Setpoint" click → close the connection
+      if (
+        tp?.isConnected &&
+        lastSetpointClickRef.current > 0 &&
+        Date.now() - lastSetpointClickRef.current > 60_000
+      ) {
+        lastSetpointClickRef.current = 0;
+        savedFrameRef.current = tp.latestFrame;   // remember where the booster ended up
+        tp.disconnect();
+        setSimStatus('idle');
+      }
+    }, 500);
+
+    return () => clearInterval(checkId);
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -153,6 +244,7 @@ export default function RocketDemo() {
     const gimbalBaseQuat: THREE.Quaternion[]       = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
     let trajectoryPlayer: TrajectoryPlayer | null  = null;
     const livePlots = new LivePlots();
+      livePlotsRef.current = livePlots;
 
     const thrustArrows: THREE.ArrowHelper[] = [];
     const THRUST_REF_N = 1_000_000;
@@ -270,9 +362,11 @@ export default function RocketDemo() {
       model.rotation.y = STAGE0.rotationY;
       scene.add(model);
 
-      const chopstickMat = new THREE.MeshStandardMaterial({ color: 0x1a1c1f, roughness: 0.3, metalness: 0.85, envMapIntensity: 1.8 });
-      const concreteMat  = new THREE.MeshStandardMaterial({ color: 0x52575c, roughness: 0.75, metalness: 0.05, envMapIntensity: 0.8 });
+      const chopstickMat  = new THREE.MeshStandardMaterial({ color: 0x1a1c1f, roughness: 0.3, metalness: 0.85, envMapIntensity: 1.8 });
+      const concreteMat   = new THREE.MeshStandardMaterial({ color: 0x52575c, roughness: 0.75, metalness: 0.05, envMapIntensity: 0.8 });
       const launchPadMat2 = new THREE.MeshStandardMaterial({ color: 0x52575c, roughness: 0.92, metalness: 0.0, envMapIntensity: 0.5 });
+
+      const towerObjects: THREE.Mesh[] = [];
 
       model.traverse((child) => {
         const mesh = child as THREE.Mesh;
@@ -282,12 +376,51 @@ export default function RocketDemo() {
           if (mesh.name === "left_chopstick")  { leftChopstick = mesh;  leftChopstickBaseQ.copy(mesh.quaternion); }
           if (mesh.name === "right_chopstick") { rightChopstick = mesh; rightChopstickBaseQ.copy(mesh.quaternion); }
           mesh.material = chopstickMat;
+          towerObjects.push(mesh);
         } else if (["Tower_base", "top-section", "mid-section"].includes(mesh.name)) {
           mesh.material = concreteMat;
+          towerObjects.push(mesh);
         } else if (mesh.name === "launch_pad") {
           mesh.material = launchPadMat2;
         }
       });
+
+      // Collect unique materials
+      const towerMats = Array.from(new Set(towerObjects.map((m) => m.material as THREE.MeshStandardMaterial)));
+
+      // Immediate show — used when switching back to demo mode
+      setTowerVisibilityRef.current = (visible: boolean) => {
+        for (const mat of towerMats) {
+          mat.transparent = false; mat.depthWrite = true; mat.opacity = 1; mat.needsUpdate = true;
+        }
+        for (const obj of towerObjects) obj.visible = visible;
+      };
+
+      // Smooth fade-out via its own rAF loop — no dependency on moduleAnims
+      let fadeRafId = 0;
+      fadeTowerOutRef.current = () => {
+        cancelAnimationFrame(fadeRafId);
+        for (const obj of towerObjects) obj.visible = true;
+        for (const mat of towerMats) {
+          mat.transparent = true; mat.depthWrite = false; mat.opacity = 1; mat.needsUpdate = true;
+        }
+        const DURATION = 700;
+        const t0 = performance.now();
+        const tick = () => {
+          const p = Math.min(1, (performance.now() - t0) / DURATION);
+          const opacity = 1 - p;
+          for (const mat of towerMats) mat.opacity = opacity;
+          if (p < 1) {
+            fadeRafId = requestAnimationFrame(tick);
+          } else {
+            for (const obj of towerObjects) obj.visible = false;
+            for (const mat of towerMats) {
+              mat.transparent = false; mat.depthWrite = true; mat.opacity = 1; mat.needsUpdate = true;
+            }
+          }
+        };
+        fadeRafId = requestAnimationFrame(tick);
+      };
 
       const connNode = model.getObjectByName("Chopstick_TowerConnector002");
       if (connNode) { chopConnector = connNode; }
@@ -468,6 +601,7 @@ export default function RocketDemo() {
 
       // ── Catch sequence checker @ 5 Hz ──────────────────────────────────────
       const catchIntervalId = setInterval(() => {
+        if (!catchEnabledRef.current) return;
         if (!trajectoryPlayer || !simSetpoint) return;
         const pos = trajectoryPlayer.latestPos;
         if (!pos) return;
@@ -581,7 +715,8 @@ export default function RocketDemo() {
       window.removeEventListener("keydown", onKeyDown);
       clearInterval((renderer as any).__catchIntervalId);
       ((renderer as any).__trajectoryPlayer as TrajectoryPlayer | undefined)?.dispose();
-      ((renderer as any).__livePlots as LivePlots | undefined)?.dispose();
+      livePlotsRef.current?.dispose();
+      livePlotsRef.current = null;
       if (fpsEl.parentNode) fpsEl.parentNode.removeChild(fpsEl);
       renderer.dispose();
       envTexture.dispose();

@@ -1,4 +1,4 @@
-// live_plots.ts — 12 live telemetry charts (optimised).
+// live_plots.ts — 7 live telemetry charts (optimised).
 
 const PAD  = { top: 18, right: 52, bottom: 20, left: 46 };
 const CW   = 400;
@@ -162,45 +162,30 @@ function drawEnginePlot(
   const lastA = alpha.length ? alpha[alpha.length - 1] : null;
   const lastB = beta.length  ? beta[beta.length - 1]   : null;
   const lastT = thrust.length ? thrust[thrust.length - 1] : null;
-  // running abs max tracked in abMaxRange — recompute from Range.max (already abs values stored)
   const maxA = isFinite(abRange.max) ? abRange.max : null;
-  const maxB = maxA; // same range object covers both
   legend(ctx, ph, [
     ["#00d4ff", `α=${lastA !== null ? lastA.toFixed(2) : "—"} mx=${maxA !== null ? maxA.toFixed(2) : "—"}`, null],
-    ["#55ff88", `β=${lastB !== null ? lastB.toFixed(2) : "—"} mx=${maxB !== null ? maxB.toFixed(2) : "—"}`, null],
+    ["#55ff88", `β=${lastB !== null ? lastB.toFixed(2) : "—"} mx=${maxA !== null ? maxA.toFixed(2) : "—"}`, null],
     ["#ff9900", lastT !== null ? `T=${lastT.toFixed(1)}kN` : "T=—", null],
   ]);
 }
 
-function drawOmegaPlot(
-  ctx: CanvasRenderingContext2D, axis: "X"|"Y"|"Z",
-  times: number[], data: number[], totalTime: number, range: Range,
-) {
-  const pw = CW - PAD.left - PAD.right, ph = CH - PAD.top - PAD.bottom;
-  ctx.fillStyle = "#0a0c10"; ctx.fillRect(0, 0, CW, CH);
-  const [yMin, yMax] = range.padded(0.1);
-  drawAxes(ctx, pw, ph, yMin, yMax, null, null, `Body Rate ω${axis}`, "#c084fc", null, "rad/s");
-  polyline(ctx, times, data, totalTime, pw, ph, yMin, yMax, "#c084fc", 1.5);
-  const last = data.length ? data[data.length - 1] : null;
-  legend(ctx, ph, [["#c084fc", `ω${axis}`, last]]);
-}
-
-function drawCartThrustPlot(
-  ctx: CanvasRenderingContext2D, label: string,
-  times: number[], fx: number[], fy: number[], fz: number[],
+function drawOmegaCombinedPlot(
+  ctx: CanvasRenderingContext2D,
+  times: number[], omegaX: number[], omegaY: number[], omegaZ: number[],
   totalTime: number, range: Range,
 ) {
   const pw = CW - PAD.left - PAD.right, ph = CH - PAD.top - PAD.bottom;
   ctx.fillStyle = "#0a0c10"; ctx.fillRect(0, 0, CW, CH);
-  const [yMin, yMax] = range.padded();
-  drawAxes(ctx, pw, ph, yMin, yMax, null, null, label, "#ff6666", null, "kN");
-  polyline(ctx, times, fx, totalTime, pw, ph, yMin, yMax, "#ff6666", 1.5);
-  polyline(ctx, times, fy, totalTime, pw, ph, yMin, yMax, "#66ff66", 1.5);
-  polyline(ctx, times, fz, totalTime, pw, ph, yMin, yMax, "#6688ff", 1.5);
-  const lastX = fx.length ? fx[fx.length - 1] : null;
-  const lastY = fy.length ? fy[fy.length - 1] : null;
-  const lastZ = fz.length ? fz[fz.length - 1] : null;
-  legend(ctx, ph, [["#ff6666", "Fx", lastX], ["#66ff66", "Fy", lastY], ["#6688ff", "Fz", lastZ]]);
+  const [yMin, yMax] = range.padded(0.1);
+  drawAxes(ctx, pw, ph, yMin, yMax, null, null, "Body Rates", "#c084fc", null, "rad/s");
+  polyline(ctx, times, omegaX, totalTime, pw, ph, yMin, yMax, "#c084fc", 1.5);
+  polyline(ctx, times, omegaY, totalTime, pw, ph, yMin, yMax, "#f472b6", 1.5);
+  polyline(ctx, times, omegaZ, totalTime, pw, ph, yMin, yMax, "#818cf8", 1.5);
+  const lastX = omegaX.length ? omegaX[omegaX.length - 1] : null;
+  const lastY = omegaY.length ? omegaY[omegaY.length - 1] : null;
+  const lastZ = omegaZ.length ? omegaZ[omegaZ.length - 1] : null;
+  legend(ctx, ph, [["#c084fc", "ωX", lastX], ["#f472b6", "ωY", lastY], ["#818cf8", "ωZ", lastZ]]);
 }
 
 // ── LivePlots class ────────────────────────────────────────────────────────────
@@ -219,17 +204,12 @@ export class LivePlots {
   private beta:   [number[], number[], number[]] = [[], [], []];
   private thrust: [number[], number[], number[]] = [[], [], []];
   private omega:  [number[], number[], number[]] = [[], [], []];
-  private cartFx: [number[], number[], number[]] = [[], [], []];
-  private cartFy: [number[], number[], number[]] = [[], [], []];
-  private cartFz: [number[], number[], number[]] = [[], [], []];
 
-  // Running ranges — recomputed incrementally in addFrame, reset in setMeta
+  // Running ranges
   private posRange:    Range[] = [new Range(), new Range(), new Range()];
-  // For engine plots, abRange covers combined alpha+beta; tRange covers thrust
   private abRange:     Range[] = [new Range(), new Range(), new Range()];
   private thrustRange: Range[] = [new Range(), new Range(), new Range()];
-  private omegaRange:  Range[] = [new Range(), new Range(), new Range()];
-  private cartRange:   Range[] = [new Range(), new Range(), new Range()];
+  private omegaRange:  Range   = new Range();
 
   constructor() { this._buildPanel(); }
 
@@ -237,13 +217,11 @@ export class LivePlots {
     this.totalTime = totalTime; this.setpoint = setpoint;
     this.times = []; this.pos = [[], [], []]; this.alpha = [[], [], []]; this.beta = [[], [], []];
     this.thrust = [[], [], []]; this.omega = [[], [], []];
-    this.cartFx = [[], [], []]; this.cartFy = [[], [], []]; this.cartFz = [[], [], []];
     for (let i = 0; i < 3; i++) {
-      this.posRange[i].reset(); this.abRange[i].reset();
-      this.thrustRange[i].reset(); this.omegaRange[i].reset(); this.cartRange[i].reset();
-      // Seed posRange with setpoint so the axis always includes it
+      this.posRange[i].reset(); this.abRange[i].reset(); this.thrustRange[i].reset();
       this.posRange[i].add(setpoint[i]);
     }
+    this.omegaRange.reset();
     this._dirty = true;
   }
 
@@ -251,7 +229,7 @@ export class LivePlots {
     t: number, pos: [number, number, number],
     engines: [number, number, number][],
     omega: [number, number, number],
-    u_cart?: [number, number, number][],
+    _u_cart?: [number, number, number][],
   ): void {
     const R2D = 180 / Math.PI;
     this.times.push(t);
@@ -269,20 +247,12 @@ export class LivePlots {
       if (isFinite(tk)) this.thrustRange[i].add(tk);
 
       this.omega[i].push(omega[i]);
-      this.omegaRange[i].add(omega[i]);
-    }
-    if (u_cart) {
-      for (let i = 0; i < 3; i++) {
-        const fx = u_cart[i][0] / 1000, fy = u_cart[i][1] / 1000, fz = u_cart[i][2] / 1000;
-        this.cartFx[i].push(fx); this.cartFy[i].push(fy); this.cartFz[i].push(fz);
-        this.cartRange[i].add(fx); this.cartRange[i].add(fy); this.cartRange[i].add(fz);
-      }
+      this.omegaRange.add(omega[i]);
     }
     this._dirty = true;
   }
 
   render(): void {
-    // Skip when collapsed or nothing changed or rendering too fast
     if (this._collapsed || !this._dirty) return;
     const now = performance.now();
     if (now - this._lastRender < RENDER_INTERVAL_MS) return;
@@ -290,12 +260,16 @@ export class LivePlots {
     this._dirty = false;
 
     const axLabels: ("X"|"Y"|"Z")[] = ["X", "Y", "Z"];
+    // ctxs[0..2]: position X/Y/Z
     for (let i = 0; i < 3; i++) {
       drawPositionPlot(this.ctxs[i], axLabels[i], this.times, this.pos[i], this.setpoint[i], this.totalTime, this.posRange[i]);
-      drawEnginePlot(this.ctxs[3 + i], `Engine ${i + 1}`, this.times, this.alpha[i], this.beta[i], this.thrust[i], this.totalTime, this.abRange[i], this.thrustRange[i]);
-      drawOmegaPlot(this.ctxs[6 + i], axLabels[i], this.times, this.omega[i], this.totalTime, this.omegaRange[i]);
-      drawCartThrustPlot(this.ctxs[9 + i], `Engine ${i + 1} Cart`, this.times, this.cartFx[i], this.cartFy[i], this.cartFz[i], this.totalTime, this.cartRange[i]);
     }
+    // ctxs[3..5]: engine 1/2/3 gimbal
+    for (let i = 0; i < 3; i++) {
+      drawEnginePlot(this.ctxs[3 + i], `Engine ${i + 1}`, this.times, this.alpha[i], this.beta[i], this.thrust[i], this.totalTime, this.abRange[i], this.thrustRange[i]);
+    }
+    // ctxs[6]: combined body rates
+    drawOmegaCombinedPlot(this.ctxs[6], this.times, this.omega[0], this.omega[1], this.omega[2], this.totalTime, this.omegaRange);
   }
 
   dispose(): void {
@@ -320,7 +294,7 @@ export class LivePlots {
     body.style.cssText = "background:rgba(10,12,16,0.88);border:1px solid rgba(255,255,255,0.08);border-top:none;border-radius:0 0 10px 10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;max-height:90vh;overflow-y:auto;will-change:transform;";
 
     const dpr = window.devicePixelRatio || 1;
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 7; i++) {
       const canvas = document.createElement("canvas");
       canvas.width = CW * dpr; canvas.height = CH * dpr;
       canvas.style.cssText = `width:${CW}px;height:${CH}px;display:block;border-radius:4px;`;
@@ -330,14 +304,12 @@ export class LivePlots {
       this.ctxs.push(ctx);
     }
 
-    // Start collapsed
     body.style.display = "none";
     chevron.style.transform = "rotate(180deg)";
     titleBar.addEventListener("click", () => {
       this._collapsed = !this._collapsed;
       body.style.display = this._collapsed ? "none" : "flex";
       chevron.style.transform = this._collapsed ? "rotate(180deg)" : "";
-      // Force one redraw when opening so charts aren't blank
       if (!this._collapsed) { this._dirty = true; this._lastRender = 0; this.render(); }
     });
 
