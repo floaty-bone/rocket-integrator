@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, Linkedin } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import RippleMesh from '../components/RippleMesh';
 
 const HomePage = () => {
   const [scrollPosition, setScrollPosition] = useState(0);
   const [navVisible, setNavVisible] = useState(true);
+  const location = useLocation();
+
+  useEffect(() => {
+    if ((location.state as any)?.scrollToContact) {
+      setTimeout(() => document.getElementById('contact')?.scrollIntoView({ behavior: 'smooth' }), 100);
+    }
+  }, [location.state]);
 
   useEffect(() => {
     let lastScroll = 0;
@@ -90,7 +97,7 @@ const HomePage = () => {
       </header>
 
       {/* Contact Section */}
-      <section className="relative z-10 py-32 px-24">
+      <section id="contact" className="relative z-10 py-32 px-24">
         <div className="max-w-7xl mx-auto flex justify-between items-start">
           <div className="max-w-lg">
             <h3 className="text-4xl font-light mb-8">Contact Me</h3>

@@ -33,6 +33,7 @@ export default function RocketDemo() {
   const lastLiveSetpointRef     = useRef<[number, number, number]>([0, 0, 48]);
   const savedFrameRef           = useRef<import('../rocket/trajectory_player').SimFrame | null>(null);
   const livePlotsRef            = useRef<LivePlots | null>(null);
+  const [sceneReady, setSceneReady] = useState(false);
   const [simStatus, setSimStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [simError,  setSimError]  = useState('');
   const [spX, setSpX] = useState('0');
@@ -567,6 +568,7 @@ export default function RocketDemo() {
       });
 
       boosterModel = model;
+      setSceneReady(true);
 
       // ── Trajectory player ──────────────────────────────────────────────────
       const _chopQtmp  = new THREE.Quaternion();
@@ -727,15 +729,15 @@ export default function RocketDemo() {
   const isLoading = simStatus === 'loading';
 
   const inputStyle: React.CSSProperties = {
-    width: '100%', minWidth: 0, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)',
-    borderRadius: '4px', color: '#cdd6e0', fontFamily: 'monospace', fontSize: '12px',
-    padding: '4px 4px', textAlign: 'center', boxSizing: 'border-box',
+    width: '100%', minWidth: 0, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)',
+    borderRadius: '4px', color: 'rgba(255,255,255,0.7)', fontFamily: 'inherit', fontSize: '12px',
+    fontWeight: 400, padding: '4px 4px', textAlign: 'center', boxSizing: 'border-box',
   };
 
   const btnBase: React.CSSProperties = {
-    width: '100%', padding: '7px 0', borderRadius: '5px', border: 'none', cursor: 'pointer',
-    fontFamily: 'monospace', fontSize: '11px', letterSpacing: '0.08em', textTransform: 'uppercase',
-    transition: 'opacity 0.2s',
+    width: '100%', padding: '8px 0', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.10)',
+    cursor: 'pointer', fontFamily: 'inherit', fontSize: '10px', fontWeight: 400,
+    letterSpacing: '0.18em', textTransform: 'uppercase', transition: 'opacity 0.2s', background: 'none',
   };
 
   // ── Overlay ─────────────────────────────────────────────────────────────────
@@ -743,54 +745,53 @@ export default function RocketDemo() {
     <div style={{ position: 'fixed', inset: 0, background: '#0d0e10' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* Nav bar */}
-      <nav style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, background: 'rgba(0,0,0,0.60)', backdropFilter: 'blur(6px)' }}>
-        <div style={{ padding: '20px 96px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Link to="/home" className="text-xl font-light tracking-wide text-white hover:text-[#9F8E6D] transition-colors duration-300">Ali Abouelazz</Link>
-          <div className="flex gap-12 text-sm font-light tracking-wider">
-            <Link to="/home" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">HOME</Link>
-            <Link to="/downloadsPage" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">TECHNICAL PORTFOLIO</Link>
-            <Link to="/competencesPage" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">SKILLS</Link>
-            <Link to="/loisirs" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">INTERESTS</Link>
-            <span className="text-[#9F8E6D] tracking-wider">ROCKET DEMO</span>
-          </div>
+      {/* Loading overlay */}
+      {!sceneReady && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 100, background: '#0d0e10', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '24px' }}>
+          <div style={{ width: '40px', height: '40px', border: '1px solid rgba(159,142,109,0.25)', borderTopColor: '#9F8E6D', borderRadius: '50%', animation: 'spin 1.2s linear infinite' }} />
+          <p style={{ fontFamily: 'inherit', fontSize: '11px', letterSpacing: '0.2em', color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase' }}>Loading scene</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
-      </nav>
+      )}
+
+      {/* Back link */}
+      <Link to="/downloadsPage"
+        style={{ position: 'absolute', top: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 50 }}
+        className="text-xs font-light tracking-widest text-white/40 hover:text-[#9F8E6D] uppercase whitespace-nowrap">
+        ← Back to Portfolio
+      </Link>
 
       {/* Control panel — bottom right */}
       <div style={{
         position: 'absolute', bottom: '16px', right: '16px', zIndex: 1000,
-        background: 'rgba(10,12,16,0.88)', border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: '10px', padding: '14px 16px', width: '220px', boxSizing: 'border-box',
-        fontFamily: 'monospace', color: '#cdd6e0',
+        background: 'rgba(8,9,12,0.82)', border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: '10px', padding: '18px 20px', width: '230px', boxSizing: 'border-box',
+        fontFamily: 'inherit', color: 'rgba(255,255,255,0.85)',
       }}>
-        <div style={{ fontSize: '10px', letterSpacing: '0.1em', color: '#8ab4d4', textTransform: 'uppercase', marginBottom: '12px' }}>
+        <div style={{ fontSize: '9px', letterSpacing: '0.22em', color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', marginBottom: '16px', fontWeight: 300 }}>
           Simulation Control
         </div>
 
-        {/* Option 1 — Demo */}
         <button
           onClick={runDemo}
           disabled={isLoading}
-          style={{ ...btnBase, background: 'rgba(138,180,212,0.12)', color: '#8ab4d4', opacity: isLoading ? 0.5 : 1 }}
+          style={{ ...btnBase, borderColor: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.85)', opacity: isLoading ? 0.4 : 1 }}
         >
-          ▶ Simulate Landing
+          Simulate Landing
         </button>
-        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', textAlign: 'center', marginTop: '4px', marginBottom: '14px' }}>
+        <div style={{ fontSize: '9px', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.40)', textAlign: 'center', marginTop: '6px', marginBottom: '16px', fontWeight: 300 }}>
           or press Space
         </div>
 
-        {/* Divider */}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', marginBottom: '12px' }} />
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginBottom: '16px' }} />
 
-        {/* Option 2 — Custom setpoint */}
-        <div style={{ fontSize: '10px', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: '8px' }}>
+        <div style={{ fontSize: '9px', letterSpacing: '0.18em', color: 'rgba(255,255,255,0.50)', textTransform: 'uppercase', marginBottom: '10px', fontWeight: 300 }}>
           Custom Setpoint (m)
         </div>
-        <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', width: '100%', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', width: '100%', boxSizing: 'border-box' }}>
           {([['X', spX, setSpX], ['Y', spY, setSpY], ['Z', spZ, setSpZ]] as [string, string, (v: string) => void][]).map(([label, val, setter]) => (
-            <label key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', flex: '1 1 0', minWidth: 0 }}>
-              <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)' }}>{label}</span>
+            <label key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flex: '1 1 0', minWidth: 0 }}>
+              <span style={{ fontSize: '9px', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.50)', fontWeight: 300 }}>{label}</span>
               <input
                 type="number"
                 value={val}
@@ -803,14 +804,13 @@ export default function RocketDemo() {
         <button
           onClick={runSetpoint}
           disabled={isLoading}
-          style={{ ...btnBase, background: 'rgba(159,142,109,0.15)', color: '#9F8E6D', opacity: isLoading ? 0.5 : 1 }}
+          style={{ ...btnBase, borderColor: 'rgba(159,142,109,0.40)', color: '#9F8E6D', opacity: isLoading ? 0.4 : 1 }}
         >
-          {isLoading ? 'Running…' : '▶ Go to Setpoint'}
+          {isLoading ? 'Running…' : 'Go to Setpoint'}
         </button>
 
-        {/* Status / error */}
         {simError && (
-          <div style={{ marginTop: '8px', fontSize: '10px', color: '#e06c75', wordBreak: 'break-word' }}>
+          <div style={{ marginTop: '10px', fontSize: '10px', color: '#e06c75', wordBreak: 'break-word', fontWeight: 300 }}>
             {simError}
           </div>
         )}

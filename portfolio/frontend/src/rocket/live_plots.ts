@@ -279,19 +279,19 @@ export class LivePlots {
   private _buildPanel(): void {
     const wrapper = document.createElement("div");
     this._wrapperEl = wrapper;
-    wrapper.style.cssText = "position:fixed;top:20px;left:20px;z-index:1000;font:13px/1.6 monospace;color:#cdd6e0;";
+    wrapper.style.cssText = "position:fixed;top:20px;left:20px;z-index:1000;font:400 12px/1.6 inherit;color:rgba(255,255,255,0.85);";
 
     const titleBar = document.createElement("div");
-    titleBar.style.cssText = "display:flex;align-items:center;justify-content:space-between;background:rgba(10,12,16,0.95);border:1px solid rgba(255,255,255,0.08);border-radius:10px 10px 0 0;padding:8px 14px;cursor:pointer;user-select:none;";
+    titleBar.style.cssText = "display:flex;align-items:center;justify-content:space-between;background:rgba(8,9,12,0.82);border:1px solid rgba(255,255,255,0.08);border-radius:10px 10px 0 0;padding:10px 16px;cursor:pointer;user-select:none;";
     const titleText = document.createElement("span");
     titleText.textContent = "Telemetry";
-    titleText.style.cssText = "font-weight:bold;color:#8ab4d4;font-size:11px;letter-spacing:.08em;text-transform:uppercase;";
+    titleText.style.cssText = "font-weight:400;color:rgba(255,255,255,0.60);font-size:9px;letter-spacing:0.22em;text-transform:uppercase;";
     const chevron = document.createElement("span");
-    chevron.textContent = "▲"; chevron.style.cssText = "font-size:10px;color:#556070;transition:transform 0.2s;";
+    chevron.textContent = "▲"; chevron.style.cssText = "font-size:9px;color:rgba(255,255,255,0.45);transition:transform 0.2s;";
     titleBar.appendChild(titleText); titleBar.appendChild(chevron);
 
     const body = document.createElement("div");
-    body.style.cssText = "background:rgba(10,12,16,0.88);border:1px solid rgba(255,255,255,0.08);border-top:none;border-radius:0 0 10px 10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;max-height:90vh;overflow-y:auto;will-change:transform;";
+    body.style.cssText = "background:rgba(8,9,12,0.82);border:1px solid rgba(255,255,255,0.08);border-top:none;border-radius:0 0 10px 10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;max-height:90vh;overflow-y:auto;will-change:transform;";
 
     const dpr = window.devicePixelRatio || 1;
     for (let i = 0; i < 7; i++) {
