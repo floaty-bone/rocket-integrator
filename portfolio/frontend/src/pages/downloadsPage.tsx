@@ -196,15 +196,11 @@ function RocketDemoCard() {
           <p className="text-sm text-gray-300 leading-relaxed max-w-xl">
             Experimenting with LQR full-state feedback control — live 3D simulation launch demo.
           </p>
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            {['LQR', 'RK4', '6-DOF', 'JAX', 'Three.js', 'WebSocket'].map(t => (
-              <span key={t} className="text-xs px-2 py-0.5 rounded-full font-light"
-                style={{ background: 'rgba(159,142,109,0.15)', color: '#9F8E6D', border: '1px solid rgba(159,142,109,0.35)' }}>{t}</span>
-            ))}
-          </div>
         </div>
-        <div className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-light flex-shrink-0 transition-colors duration-300 group-hover:bg-[#9F8E6D] group-hover:text-white"
-          style={{ border: '1px solid rgba(159,142,109,0.50)', color: '#9F8E6D' }}>
+        <div className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-light flex-shrink-0 transition-all duration-300"
+          style={{ border: '1px solid rgba(159,142,109,0.50)', color: '#9F8E6D' }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#9F8E6D'; e.currentTarget.style.color = 'white'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9F8E6D'; }}>
           <span>Launch Demo</span>
           <ExternalLink className="w-3.5 h-3.5" />
         </div>
@@ -685,15 +681,81 @@ function StarshipContent() {
 function LQRContent() {
   return (
     <>
-      {/* Study 3 */}
-      <Subsection title="Study 3: 6-DOF Rigid-Body Dynamics Simulator, RK4 Integrator" />
+      <Subsubsection title="Context" />
+      <Para>
+        A traditional rocket is thrown away after a single flight — the equivalent of scrapping a commercial aircraft
+        after every trip. SpaceX changed this by landing their boosters propulsively: using the rocket's own engines
+        to decelerate and return it to the launch site, where it can be refuelled and flown again. This is what drives
+        their cost advantage. Starship's Super Heavy booster goes further — it is caught mid-air by two mechanical
+        arms on the launch tower, since a booster of that size landing on legs would be structurally impractical.
+      </Para>
+      <Para>
+        Making this work is a flight software problem. The booster is an inherently unstable system — it naturally
+        tips over. Its engines can be gimballed (their thrust direction tilted), and the flight software must
+        coordinate those gimbal angles in real time, at every millisecond, to simultaneously control where the vehicle
+        is going and how it is oriented. An uncorrected error compounds faster than a human could react.
+      </Para>
+      <Para>
+        This project builds that flight software from scratch. A 6-DOF rigid-body simulator acts as the virtual
+        rocket — it takes engine commands and propagates the full physical state of the vehicle forward in time.
+        An LQR full-state feedback controller reads that state, computes the optimal gimbal angles and thrust for each
+        engine, and sends the commands back. Closing this loop is called a Software-in-the-Loop (SIL) simulation:
+        the standard method for validating flight software before it ever runs on real hardware.
+      </Para>
+
+      <div className="grid grid-cols-2 gap-4 my-5">
+        <div className="flex flex-col items-center gap-2">
+          <div className="rounded-md overflow-hidden">
+            <video
+              src="/ali-portfolio/images-videos/booster-catch-real.mp4"
+              className="h-96 w-auto max-w-full"
+              autoPlay
+              playsInline
+              loop
+              muted
+            />
+          </div>
+          <p className="text-xs text-gray-500 italic text-center">Super Heavy booster caught by Mechazilla, 13 Oct 2024</p>
+        </div>
+        <div className="flex flex-col items-center gap-2">
+          <div className="rounded-md overflow-hidden">
+            <video
+              src="/ali-portfolio/images-videos/booster-catch-sim.mp4"
+              className="h-96 w-auto max-w-full"
+              autoPlay
+              playsInline
+              loop
+              muted
+              ref={el => { if (el) el.playbackRate = 1.1; }}
+            />
+          </div>
+          <p className="text-xs text-gray-500 italic text-center">6-DOF LQR simulation — Go to Setpoint manoeuvre</p>
+        </div>
+      </div>
+      <div className="flex justify-center mt-6 mb-3">
+        <p className="text-sm text-gray-400 font-light italic">The simulation runs live in your browser — no install needed.</p>
+      </div>
+      <div className="flex justify-center mb-8">
+        <Link to="/rocketDemo"
+          className="inline-flex items-center gap-3 px-10 py-3.5 rounded-lg text-sm font-light tracking-wider transition-all duration-300"
+          style={{ border: '1px solid rgba(159,142,109,0.45)', color: '#9F8E6D' }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#9F8E6D'; e.currentTarget.style.color = 'white'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9F8E6D'; }}>
+          <ExternalLink className="w-4 h-4" />
+          <span>Launch Demo</span>
+        </Link>
+      </div>
 
       <Subsubsection title="Objective" />
       <Para>
-        The goal is simple: obtain a numerically reliable integrator for the six degrees of freedom of a rigid body.
-        No linearisation, no small-angle assumption, no analytical shortcut. Given a force and moment input at each
-        instant, the integrator must propagate the full state of the body forward in time with controlled numerical
-        error and remain stable over long simulation horizons.
+        The goal is to develop and validate, in simulation, the full guidance and control stack for a propulsively
+        landing rocket stage. This requires two things built in tandem: a numerically reliable 6-DOF rigid-body
+        integrator that serves as the virtual vehicle, and an LQR full-state feedback controller that commands it.
+        Neither is useful without the other — the integrator needs a controller to drive it to a meaningful scenario,
+        and the controller needs a physics-accurate plant to be tested against. The two are developed and unit-tested
+        separately, then connected in a Software-in-the-Loop (SIL) simulation that validates closed-loop behaviour at
+        flight-realistic update rates. The three parts below follow that order: first the integrator, then the
+        controller, then the integration that ties them together.
       </Para>
       <Para>
         Full implementation:{' '}
@@ -701,6 +763,18 @@ function LQRContent() {
           className="text-[#9F8E6D] hover:underline">
           github.com/floaty-bone/rocket-integrator
         </a>
+        {' · '}
+        <Link to="/rocketDemo" className="inline-flex items-center gap-1 text-[#9F8E6D] hover:underline">
+          <ExternalLink className="w-3 h-3" />launch demo
+        </Link>
+      </Para>
+
+      {/* ── Part 1: the integrator ── */}
+      <Subsection title="Part 1 — The 6-DOF Rigid-Body Integrator (RK4)" />
+      <Para>
+        The integrator makes no concessions to simplicity: no linearisation, no small-angle assumption, no analytical
+        shortcut. It propagates the full nonlinear state forward in time using a fourth-order Runge-Kutta scheme at
+        sub-millisecond resolution, and must remain numerically stable over the full duration of a landing manoeuvre.
       </Para>
 
       <Subsubsection title="State Representation" />
@@ -792,35 +866,61 @@ function LQRContent() {
         animation made this directly visible, which is something no closed-form solution could have offered as clearly.
       </Para>
 
-      <Outcome accent="#9F8E6D" title="Key Outcomes">
-        <ul className="space-y-1">
-          <li>· Full 6-DOF rigid-body propagation with quaternion kinematics, with no gimbal lock.</li>
-          <li>· Fourth-order Runge-Kutta at <Eq>{'h = 1\\,\\text{ms}'}</Eq>, global error <Eq>{'\\mathcal{O}(h^4)'}</Eq>.</li>
-          <li>· Quaternion re-normalisation at every step to prevent long-term attitude drift.</li>
-          <li>· Numerical reproduction of the Dzhanibekov effect: rotation about the intermediate inertia axis is unstable and the simulator captures it exactly.</li>
-        </ul>
-      </Outcome>
-
-      {/* Study 4 */}
-      <Subsection title="Study 4: Software-in-the-Loop Validation of the LQR Controller" />
-
-      <Subsubsection title="Objective" />
+      {/* ── Part 2: the controller ── */}
+      <Subsection title="Part 2 — The LQR Controller" />
       <Para>
-        The LQR controller and the RK4 integrator are two pieces that have been developed and unit-tested in isolation.
-        The controller computes a feedback gain <Eq>{'\\mathbf{K}'}</Eq> from a tangent-space linearisation of the
-        6-DOF dynamics; the integrator propagates the full non-linear state forward at 1 ms resolution. Neither result
-        tells us anything about closed-loop behaviour. The Software-in-the-Loop (SIL) simulation closes the loop: at
-        every controller tick, the gain <Eq>{'\\mathbf{K}'}</Eq> is applied to the live plant state, the resulting
-        actuator command is fed back into the RK4 integrator, and the new state is fed back into the controller. The
-        purpose is to validate that the linear LQR law, re-linearised periodically along the trajectory, actually
-        stabilises the full non-linear vehicle from a non-trivial initial attitude to a target setpoint.
+        An LQR (Linear Quadratic Regulator) is a full-state feedback controller: it multiplies the current state error
+        by a precomputed gain matrix <Eq>{'\\mathbf{K}'}</Eq> to produce the control command that optimally balances how
+        quickly the error is driven to zero against how much actuator effort is spent. The gain is computed from a
+        tangent-space linearisation of the 6-DOF dynamics, and is what turns the raw simulator into a controllable
+        vehicle.
       </Para>
+
+      <Subsubsection title="Linearisation and Gain Computation" />
       <Para>
-        Full implementation:{' '}
-        <a href="https://github.com/floaty-bone/rocket-integrator" target="_blank" rel="noreferrer"
-          className="text-[#9F8E6D] hover:underline">
-          github.com/floaty-bone/rocket-integrator
-        </a>
+        LQR is, by definition, a linear law: it is exact only at the operating point{' '}
+        <Eq>{'(\\mathbf{s}_{\\text{op}},\\mathbf{u}_{\\text{op}})'}</Eq> where the Jacobians{' '}
+        <Eq>{'A=\\partial f/\\partial\\mathbf{s}'}</Eq> and{' '}
+        <Eq>{'B=\\partial f/\\partial\\mathbf{u}'}</Eq> were taken. The vehicle dynamics are strongly non-linear
+        (<Eq>{'\\mathbf{R}(\\mathbf{q})'}</Eq>, gyroscopic coupling,{' '}
+        <Eq>{'\\boldsymbol{\\omega}\\times(\\mathbf{I}\\boldsymbol{\\omega})'}</Eq>), so the operating point must be
+        refreshed along the trajectory. At each refresh, <Eq>{'A'}</Eq> and <Eq>{'B'}</Eq> are recomputed by JAX
+        auto-differentiation of the dynamics function around the current <Eq>{'(\\mathbf{s},\\mathbf{u})'}</Eq>, and a
+        new gain <Eq>{'\\mathbf{K}'}</Eq> is obtained by solving the continuous-time algebraic Riccati equation:
+      </Para>
+      <EqBlock>{`A^\\top P + P A - P B R^{-1} B^\\top P + Q = 0,
+\\qquad
+\\mathbf{K} = R^{-1} B^\\top P`}</EqBlock>
+
+      <Subsubsection title="Thrust-Vector-Control Encoding" />
+      <Para>
+        Internally the LQR computes thrust as a Cartesian force vector{' '}
+        <Eq>{'[F_x, F_y, F_z]'}</Eq> per engine, which is the natural form for an affine state-space formulation. The
+        real vehicle, however, commands two gimbal angles and a thrust magnitude per engine. The controller therefore
+        converts its Cartesian solution into the <Eq>{'[\\alpha,\\,\\beta,\\,T]'}</Eq> form an actuator actually
+        receives, via the forward and inverse trigonometric mapping:
+      </Para>
+      <EqBlock>{`\\begin{aligned}
+F_x &= T\\cos\\alpha\\cos\\beta \\\\
+F_y &= T\\cos\\alpha\\sin\\beta \\\\
+F_z &= -T\\sin\\alpha
+\\end{aligned}
+\\qquad
+\\begin{aligned}
+T     &= \\sqrt{F_x^2+F_y^2+F_z^2} \\\\
+\\alpha &= -\\arcsin\\!\\bigl(F_z/T\\bigr) \\\\
+\\beta  &= \\operatorname{atan2}(F_y,\\,F_x)
+\\end{aligned}`}</EqBlock>
+
+      {/* ── Part 3: SIL integration & results ── */}
+      <Subsection title="Part 3 — Software-in-the-Loop Integration & Results" />
+      <Para>
+        The integrator and controller are developed and unit-tested in isolation; neither result says anything about
+        closed-loop behaviour. The Software-in-the-Loop (SIL) simulation closes the loop: at every controller tick,
+        the gain <Eq>{'\\mathbf{K}'}</Eq> is applied to the live plant state, the resulting actuator command is fed
+        back into the RK4 integrator, and the new state is fed back into the controller. The purpose is to validate
+        that the LQR law, re-linearised periodically along the trajectory, actually stabilises the full non-linear
+        vehicle from a non-trivial initial attitude to a target setpoint.
       </Para>
 
       <Subsubsection title="Architecture" />
@@ -840,26 +940,11 @@ function LQRContent() {
         <li><strong className="text-white">Output:</strong> next state <Eq>{'\\mathbf{s}^+\\in\\mathbb{R}^{13}'}</Eq>, computed by one RK4 step.</li>
       </ul>
       <Para>
-        The crucial point is the choice of bus variable. Internally the LQR computes thrust as a Cartesian force vector{' '}
-        <Eq>{'[F_x, F_y, F_z]'}</Eq> per engine, which is the natural form for an affine state-space formulation. The
-        real vehicle, however, commands two gimbal angles and a thrust magnitude. Routing{' '}
-        <Eq>{'[\\alpha,\\,\\beta,\\,T]'}</Eq> across the SIL boundary forces the simulation to exercise the same
-        trigonometric mapping the flight software will execute:
-      </Para>
-      <EqBlock>{`\\begin{aligned}
-F_x &= T\\cos\\alpha\\cos\\beta \\\\
-F_y &= T\\cos\\alpha\\sin\\beta \\\\
-F_z &= -T\\sin\\alpha
-\\end{aligned}
-\\qquad
-\\begin{aligned}
-T     &= \\sqrt{F_x^2+F_y^2+F_z^2} \\\\
-\\alpha &= -\\arcsin\\!\\bigl(F_z/T\\bigr) \\\\
-\\beta  &= \\operatorname{atan2}(F_y,\\,F_x)
-\\end{aligned}`}</EqBlock>
-      <Para>
-        Any singularity, saturation, or precision loss in that mapping appears in closed loop, not as a hidden internal
-        quantity.
+        The crucial design choice is the bus variable. Although the controller solves internally in Cartesian forces,
+        the bus carries the <Eq>{'[\\alpha,\\,\\beta,\\,T]'}</Eq> gimbal command — the same signal the real vehicle
+        receives. Routing it across the SIL boundary forces the simulation to exercise the same trigonometric mapping
+        shown above, so any singularity, saturation, or precision loss in that mapping appears in closed loop, not as
+        a hidden internal quantity.
       </Para>
 
       <Subsubsection title="Multi-Rate Scheduling" />
@@ -877,22 +962,11 @@ T     &= \\sqrt{F_x^2+F_y^2+F_z^2} \\\\
         ]}
       />
       <Para>
-        The relinearisation rate is the load-bearing parameter. LQR is, by definition, a linear law: it is exact only
-        at the operating point <Eq>{'(\\mathbf{s}_{\\text{op}},\\mathbf{u}_{\\text{op}})'}</Eq> where the Jacobians{' '}
-        <Eq>{'A=\\partial f/\\partial\\mathbf{s}'}</Eq> and{' '}
-        <Eq>{'B=\\partial f/\\partial\\mathbf{u}'}</Eq> were taken. The vehicle dynamics are strongly non-linear
-        (<Eq>{'\\mathbf{R}(\\mathbf{q})'}</Eq>, gyroscopic coupling,{' '}
-        <Eq>{'\\boldsymbol{\\omega}\\times(\\mathbf{I}\\boldsymbol{\\omega})'}</Eq>), so the operating point must be
-        refreshed along the trajectory. At each refresh, <Eq>{'A'}</Eq> and <Eq>{'B'}</Eq> are recomputed by JAX
-        auto-differentiation of the dynamics function around the current <Eq>{'(\\mathbf{s},\\mathbf{u})'}</Eq>, and a
-        new gain <Eq>{'\\mathbf{K}'}</Eq> is obtained by solving the continuous-time algebraic Riccati equation:
-      </Para>
-      <EqBlock>{`A^\\top P + P A - P B R^{-1} B^\\top P + Q = 0,
-\\qquad
-\\mathbf{K} = R^{-1} B^\\top P`}</EqBlock>
-      <Para>
-        Between refreshes, the controller applies the cached <Eq>{'\\mathbf{K}'}</Eq> at the full 5 kHz rate; the cost
-        stays in the affordable range while the linearisation stays close enough to the trajectory to remain valid.
+        The relinearisation rate is the load-bearing parameter. Because the LQR gain is only valid near its operating
+        point and the dynamics are strongly non-linear, the linearisation must be refreshed along the trajectory —
+        here at 30 Hz. Between refreshes, the controller applies the cached <Eq>{'\\mathbf{K}'}</Eq> at the full 5 kHz
+        rate; the cost stays in the affordable range while the linearisation stays close enough to the trajectory to
+        remain valid.
       </Para>
 
       <Subsubsection title="Test Scenario" />
@@ -919,8 +993,8 @@ T     &= \\sqrt{F_x^2+F_y^2+F_z^2} \\\\
         steady-state offset and no oscillation past the transient. The TVC commands stay inside physically sensible
         bounds: gimbal angles in the low-degree range, per-engine thrust modulating around the hover share. The final
         quaternion norm, after 30 seconds at 8 kHz (<Eq>{'2.4 \\times 10^5'}</Eq> RK4 steps), is within{' '}
-        <Eq>{'10^{-8}'}</Eq> of unity, confirming that the per-step re-normalisation of Study 3 holds up over the full
-        SIL horizon.
+        <Eq>{'10^{-8}'}</Eq> of unity, confirming that the per-step re-normalisation of the integrator holds up over
+        the full SIL horizon.
       </Para>
       <Para>
         The most useful diagnostic is the disagreement curve between the controller's internal Cartesian command and
@@ -933,10 +1007,10 @@ T     &= \\sqrt{F_x^2+F_y^2+F_z^2} \\\\
 
       <Outcome accent="#9F8E6D" title="Key Outcomes">
         <ul className="space-y-1">
-          <li>· Closed-loop validation of LQR + RK4 across the full SIL boundary at flight-realistic rates (5 kHz control, 8 kHz plant, 30 Hz re-linearisation).</li>
-          <li>· SIL boundary carries <Eq>{'[\\alpha,\\beta,T]'}</Eq>, the real TVC command, not internal Cartesian forces.</li>
-          <li>· LQR re-linearised on-trajectory via JAX auto-diff + Riccati solve, no hand-derived Jacobians.</li>
-          <li>· Convergence from a horizontal initial attitude to a 3-axis position setpoint, with quaternion norm preserved to <Eq>{'10^{-8}'}</Eq> after <Eq>{'2.4\\times10^5'}</Eq> integration steps.</li>
+          <li>· Full 6-DOF rigid-body propagation with quaternion kinematics and no gimbal lock; fourth-order Runge-Kutta at <Eq>{'h = 1\\,\\text{ms}'}</Eq>, global error <Eq>{'\\mathcal{O}(h^4)'}</Eq>, with per-step quaternion re-normalisation against long-term drift.</li>
+          <li>· Numerical reproduction of the Dzhanibekov effect: rotation about the intermediate inertia axis is unstable and the simulator captures it exactly.</li>
+          <li>· LQR re-linearised on-trajectory via JAX auto-diff + Riccati solve, no hand-derived Jacobians; SIL boundary carries <Eq>{'[\\alpha,\\beta,T]'}</Eq>, the real TVC command, not internal Cartesian forces.</li>
+          <li>· Closed-loop validation across the full SIL boundary at flight-realistic rates (5 kHz control, 8 kHz plant, 30 Hz re-linearisation), converging from a horizontal initial attitude to a 3-axis position setpoint with quaternion norm preserved to <Eq>{'10^{-8}'}</Eq> after <Eq>{'2.4\\times10^5'}</Eq> integration steps.</li>
         </ul>
       </Outcome>
     </>
@@ -971,6 +1045,7 @@ const DownloadsPage = () => {
       <div className="fixed inset-0 z-0">
         <RippleMesh className="w-full h-full" />
       </div>
+      <div className="fixed inset-0 z-0" style={{ background: 'rgba(6,6,10,0.75)' }} />
 
       <nav className={`fixed w-full z-50 transition-all duration-500 ${scrollPosition > 50 ? 'bg-black/90 backdrop-blur-sm' : 'bg-transparent'} ${navVisible ? 'translate-y-0' : '-translate-y-full'}`}>
         <div className="w-full px-24 py-6 flex justify-between items-center">
@@ -980,6 +1055,7 @@ const DownloadsPage = () => {
             <Link to="/downloadsPage" className="hover:text-[#9F8E6D] transition-colors duration-300">TECHNICAL PORTFOLIO</Link>
             <Link to="/competencesPage" className="hover:text-[#9F8E6D] transition-colors duration-300">SKILLS</Link>
             <Link to="/loisirs" className="hover:text-[#9F8E6D] transition-colors duration-300">INTERESTS</Link>
+            <Link to="/rocketDemo" className="hover:text-[#9F8E6D] transition-colors duration-300">ROCKET DEMO</Link>
             <a href="#" onClick={handleContactClick} className="hover:text-[#9F8E6D] transition-colors duration-300">CONTACT</a>
           </div>
         </div>

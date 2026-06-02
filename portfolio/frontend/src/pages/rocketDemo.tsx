@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -743,20 +743,19 @@ export default function RocketDemo() {
     <div style={{ position: 'fixed', inset: 0, background: '#0d0e10' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* Top bar */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '24px 32px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', pointerEvents: 'none' }}>
-        <button
-          onClick={() => navigate('/downloadsPage')}
-          style={{ pointerEvents: 'auto', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-          className="text-xs font-light tracking-widest text-white/60 hover:text-[#9F8E6D] transition-colors duration-300 uppercase"
-        >
-          ← Back
-        </button>
-        <div style={{ textAlign: 'center', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-          <div className="text-sm font-light tracking-widest text-white/80 uppercase">Starship Booster Landing</div>
-          <div className="text-xs font-light tracking-widest text-white/40 uppercase mt-1">LQR Full-State Feedback Control</div>
+      {/* Nav bar */}
+      <nav style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, background: 'rgba(0,0,0,0.60)', backdropFilter: 'blur(6px)' }}>
+        <div style={{ padding: '20px 96px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Link to="/home" className="text-xl font-light tracking-wide text-white hover:text-[#9F8E6D] transition-colors duration-300">Ali Abouelazz</Link>
+          <div className="flex gap-12 text-sm font-light tracking-wider">
+            <Link to="/home" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">HOME</Link>
+            <Link to="/downloadsPage" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">TECHNICAL PORTFOLIO</Link>
+            <Link to="/competencesPage" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">SKILLS</Link>
+            <Link to="/loisirs" className="hover:text-[#9F8E6D] transition-colors duration-300 text-white">INTERESTS</Link>
+            <span className="text-[#9F8E6D] tracking-wider">ROCKET DEMO</span>
+          </div>
         </div>
-      </div>
+      </nav>
 
       {/* Control panel — bottom right */}
       <div style={{

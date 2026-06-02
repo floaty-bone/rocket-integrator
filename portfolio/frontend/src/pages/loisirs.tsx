@@ -58,6 +58,7 @@ const CentreInteret = () => {
             <Link to="/downloadsPage" className="hover:text-[#9F8E6D] transition-colors duration-300">TECHNICAL PORTFOLIO</Link>
             <Link to="/competencesPage" className="hover:text-[#9F8E6D] transition-colors duration-300">SKILLS</Link>
             <Link to="/loisirs" className="hover:text-[#9F8E6D] transition-colors duration-300">INTERESTS</Link>
+            <Link to="/rocketDemo" className="hover:text-[#9F8E6D] transition-colors duration-300">ROCKET DEMO</Link>
             <a href='#' onClick={handleContactClick} className="hover:text-[#9F8E6D] transition-colors duration-300">CONTACT</a>
           </div>
         </div>
@@ -73,14 +74,14 @@ const CentreInteret = () => {
             <div className="grid grid-cols-2 gap-16 items-center">
               <div>
                 <img
-                  src="/ali-portfolio/images-videos/surf.jpg"
-                  alt="Surfing in Safi"
-                  className="w-full h-[500px] object-cover rounded-lg"
+                  src="/ali-portfolio/images-videos/me_surfing.jpg"
+                  alt="Surfing"
+                  className="w-full h-[400px] object-cover rounded-lg object-left"
                 />
               </div>
               <div>
                 <p className="text-xl text-gray-300 leading-relaxed">
-                  I got into surfing through my brother. Growing up in Safi, it was just part of life there.
+                  I got into surfing through my brother. That's me at Safi Point, better known as Le Jardin. A mystical spot that comes alive only a handful of times a year. Caught right before I set up for a barrel and got absolutely worked.
                 </p>
               </div>
             </div>
