@@ -68,11 +68,11 @@ function DataTable({ caption, rows, head }: { caption: string; rows: string[][];
 
 function Fig({ src, caption, small }: { src: string; caption: string; small?: boolean }) {
   return (
-    <div className={`my-4 ${small ? 'flex flex-col items-center' : ''}`}>
-      <div className={`rounded-md overflow-hidden bg-black/30 border border-white/10 ${small ? 'inline-block' : 'w-full'}`}>
-        <img src={src} alt={caption} className={`h-auto block ${small ? 'max-h-52 max-w-sm w-auto' : 'w-full'}`} />
+    <div className="my-4 flex flex-col items-center">
+      <div className="rounded-md bg-black/30 border border-white/10 inline-block">
+        <img src={src} alt={caption} className={`h-auto block w-auto ${small ? 'max-h-48 max-w-sm' : 'max-h-60 max-w-xl'}`} />
       </div>
-      <p className={`text-xs text-gray-500 mt-1.5 italic ${small ? 'text-center max-w-sm' : ''}`}>{caption}</p>
+      <p className="text-xs text-gray-500 mt-1.5 italic text-center max-w-lg">{caption}</p>
     </div>
   );
 }
@@ -80,15 +80,15 @@ function Fig({ src, caption, small }: { src: string; caption: string; small?: bo
 function FigRow({ items }: { items: { src: string; caption?: string }[] }) {
   return (
     <div className="my-4">
-      <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>
+      <div className="flex gap-3 justify-center flex-wrap">
         {items.map((item, i) => (
-          <div key={i} className="rounded-md overflow-hidden bg-black/30 border border-white/10">
-            <img src={item.src} alt={item.caption ?? ''} className="w-full h-auto object-contain max-h-56" />
+          <div key={i} className="rounded-md bg-black/30 border border-white/10 inline-block">
+            <img src={item.src} alt={item.caption ?? ''} className="h-auto w-auto max-h-48 max-w-sm block" />
           </div>
         ))}
       </div>
       {items.some(i => i.caption) && (
-        <p className="text-xs text-gray-500 mt-1.5 italic">{items.map(i => i.caption).filter(Boolean).join(' — ')}</p>
+        <p className="text-xs text-gray-500 mt-1.5 italic text-center">{items.map(i => i.caption).filter(Boolean).join(' — ')}</p>
       )}
     </div>
   );
@@ -101,14 +101,16 @@ function FigRow({ items }: { items: { src: string; caption?: string }[] }) {
 function MajorSection({ title, children, initialOpen }: { title: string; children: React.ReactNode; initialOpen?: boolean }) {
   const [open, setOpen] = useState(initialOpen ?? false);
   return (
-    <div className="border rounded-xl overflow-hidden transition-colors duration-300"
-      style={{ borderColor: open ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.09)', background: open ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.01)' }}>
-      <button className="w-full flex items-center justify-between px-8 py-6 text-left" onClick={() => setOpen(o => !o)}>
-        <h2 className="text-2xl font-light tracking-wide text-white">{title}</h2>
-        <ChevronRight className="w-5 h-5 flex-shrink-0 transition-transform duration-300 text-white/50"
-          style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }} />
+    <div className="w-full">
+      <button className="w-full flex items-center justify-between py-6 text-left group" onClick={() => setOpen(o => !o)}>
+        <div className="flex items-center gap-6 w-full">
+          <h2 className="text-3xl font-light tracking-wide text-white group-hover:text-[#9F8E6D] transition-colors duration-300 whitespace-nowrap">{title}</h2>
+          <div className="flex-1 h-px" style={{ background: open ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.07)' }} />
+          <ChevronRight className="w-5 h-5 flex-shrink-0 transition-transform duration-300 text-white/40 group-hover:text-[#9F8E6D]"
+            style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }} />
+        </div>
       </button>
-      {open && <div className="px-6 pb-6 pt-1 space-y-3">{children}</div>}
+      {open && <div className="pb-12 space-y-0">{children}</div>}
     </div>
   );
 }
@@ -122,17 +124,22 @@ function SubSection({
 }) {
   const [open, setOpen] = useState(initialOpen ?? false);
   return (
-    <div id={id} className="border rounded-lg overflow-hidden transition-colors duration-300"
-      style={{ borderColor: open ? `${accent}45` : 'rgba(255,255,255,0.08)', background: open ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
-      <button className="w-full flex items-center justify-between px-6 py-5 text-left" onClick={() => setOpen(o => !o)}>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-widest mb-0.5" style={{ color: accent }}>{label}</p>
-          <h3 className="text-lg font-light text-white">{title}</h3>
+    <div id={id} className="w-full border-b transition-colors duration-300"
+      style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+      <button className="w-full flex items-center justify-between py-6 text-left group" onClick={() => setOpen(o => !o)}>
+        <div className="flex items-center gap-8">
+          <div className="w-1 self-stretch rounded-full flex-shrink-0 transition-colors duration-300"
+            style={{ background: open ? accent : 'rgba(255,255,255,0.10)', minHeight: '40px' }} />
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1 transition-colors duration-300"
+              style={{ color: open ? accent : 'rgba(255,255,255,0.35)' }}>{label}</p>
+            <h3 className="text-xl font-light text-white group-hover:text-[#d4c9b4] transition-colors duration-300">{title}</h3>
+          </div>
         </div>
-        <ChevronRight className="w-4 h-4 flex-shrink-0 transition-transform duration-300"
-          style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', color: accent }} />
+        <ChevronRight className="w-4 h-4 flex-shrink-0 transition-transform duration-300 ml-4"
+          style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', color: open ? accent : 'rgba(255,255,255,0.30)' }} />
       </button>
-      {open && <div className="px-6 pb-7 pt-1">{children}</div>}
+      {open && <div className="pl-9 pb-10 pt-2">{children}</div>}
     </div>
   );
 }
@@ -430,33 +437,29 @@ function CatContent() {
       </Para>
 
       {/* Concept 1 and 3 side by side, then Concept 2 row */}
-      <div className="grid grid-cols-2 gap-4 my-4">
-        <div>
-          <div className="space-y-2">
-            {[`${BASE}/cat/37.png`, `${BASE}/cat/38.png`, `${BASE}/cat/39.png`].map(src => (
-              <div key={src} className="rounded overflow-hidden bg-black/30 border border-white/10">
-                <img src={src} alt="" className="w-full h-auto object-contain max-h-32" />
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-500 mt-1 italic text-center">Concept 1</p>
+      <div className="flex gap-8 justify-center my-4 flex-wrap">
+        <div className="flex flex-col items-center gap-2">
+          {[`${BASE}/cat/37.png`, `${BASE}/cat/38.png`, `${BASE}/cat/39.png`].map(src => (
+            <div key={src} className="rounded bg-black/30 border border-white/10">
+              <img src={src} alt="" className="h-auto w-auto max-h-36 max-w-56 block" />
+            </div>
+          ))}
+          <p className="text-xs text-gray-500 italic">Concept 1</p>
         </div>
-        <div>
-          <div className="space-y-2">
-            {[`${BASE}/cat/43.png`, `${BASE}/cat/44.png`, `${BASE}/cat/45.png`].map(src => (
-              <div key={src} className="rounded overflow-hidden bg-black/30 border border-white/10">
-                <img src={src} alt="" className="w-full h-auto object-contain max-h-32" />
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-500 mt-1 italic text-center">Concept 3</p>
+        <div className="flex flex-col items-center gap-2">
+          {[`${BASE}/cat/43.png`, `${BASE}/cat/44.png`, `${BASE}/cat/45.png`].map(src => (
+            <div key={src} className="rounded bg-black/30 border border-white/10">
+              <img src={src} alt="" className="h-auto w-auto max-h-36 max-w-56 block" />
+            </div>
+          ))}
+          <p className="text-xs text-gray-500 italic">Concept 3</p>
         </div>
       </div>
       <div className="border-t border-white/10 pt-4 mb-4">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="flex gap-3 justify-center flex-wrap">
           {[`${BASE}/cat/40.png`, `${BASE}/cat/41.png`, `${BASE}/cat/42.png`].map(src => (
-            <div key={src} className="rounded overflow-hidden bg-black/30 border border-white/10">
-              <img src={src} alt="" className="w-full h-auto object-contain max-h-36" />
+            <div key={src} className="rounded bg-black/30 border border-white/10">
+              <img src={src} alt="" className="h-auto w-auto max-h-36 max-w-56 block" />
             </div>
           ))}
         </div>
@@ -1033,16 +1036,16 @@ const DownloadsPage = () => {
             <Link to="/downloadsPage" className="hover:text-[#9F8E6D] transition-colors duration-300">TECHNICAL PORTFOLIO</Link>
             <Link to="/competencesPage" className="hover:text-[#9F8E6D] transition-colors duration-300">SKILLS</Link>
             <Link to="/loisirs" className="hover:text-[#9F8E6D] transition-colors duration-300">INTERESTS</Link>
-            <Link to="/rocketDemo" className="hover:text-[#9F8E6D] transition-colors duration-300">ROCKET DEMO</Link>
+            <Link to="/rocketDemo" className="hover:text-[#9F8E6D] transition-colors duration-300">LQR CONTROL DEMO</Link>
             <a href="#" onClick={handleContactClick} className="hover:text-[#9F8E6D] transition-colors duration-300">CONTACT</a>
           </div>
         </div>
       </nav>
 
-      <div className="relative z-10 max-w-4xl mx-auto px-8 pt-40 pb-20">
+      <div className="relative z-10 max-w-6xl mx-auto px-12 pt-40 pb-20">
         <div className="mb-16">
           <h2 className="text-5xl font-light text-white mb-4">Technical Portfolio</h2>
-          <p className="text-gray-400 font-light max-w-xl leading-relaxed">
+          <p className="text-gray-400 font-light max-w-2xl leading-relaxed">
             Internship projects and personal studies in numerical simulation, structural analysis, and flight control.
           </p>
           <a
@@ -1056,11 +1059,14 @@ const DownloadsPage = () => {
         </div>
 
         <div className="mb-4">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Featured</p>
+          <Link to="/downloadsPage" state={{ openSection: 'lqr' }}
+            className="text-xs font-semibold uppercase tracking-widest text-gray-500 hover:text-[#9F8E6D] transition-colors duration-300 mb-4 inline-block">
+            Highlight
+          </Link>
           <RocketDemoCard />
         </div>
 
-        <div className="mt-12 space-y-4">
+        <div className="mt-16 space-y-2">
           <MajorSection title="Personal Projects" initialOpen={openSection === 'lqr'}>
             <SubSection label="Personal Study" title="LQR Full-State Feedback Control & 6-DOF Body Integrator" accent="#9F8E6D" id="lqr" initialOpen={openSection === 'lqr'}>
               <LQRContent />

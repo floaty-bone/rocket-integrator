@@ -15,8 +15,6 @@ import {
 
 const BASE = import.meta.env.BASE_URL;
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'https://rocket-sim-api.onrender.com';
-
 export default function RocketDemo() {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -24,22 +22,16 @@ export default function RocketDemo() {
   const resetCatchRef        = useRef<(() => void) | null>(null);
   const runDemoRef           = useRef<(() => void) | null>(null);
   const catchEnabledRef         = useRef(false);
+  const catchEnableTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setTowerVisibilityRef   = useRef<((v: boolean) => void) | null>(null);
   const fadeTowerOutRef         = useRef<(() => void) | null>(null);
-  const isFirstSetpointRef      = useRef(true);
-  const pendingSetpointRef      = useRef<[number, number, number] | null>(null);
-  const lastSetpointClickRef    = useRef(0);
-  const lastLiveSetpointRef     = useRef<[number, number, number]>([0, 0, 48]);
-  const savedFrameRef           = useRef<import('../rocket/trajectory_player').SimFrame | null>(null);
   const livePlotsRef            = useRef<LivePlots | null>(null);
   const animateCameraToRef      = useRef<((pos: [number,number,number], target: [number,number,number], ms?: number) => void) | null>(null);
   const hasSimulatedRef         = useRef(false);
   const [sceneReady, setSceneReady] = useState(false);
   const [simStatus, setSimStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [simError,  setSimError]  = useState('');
-  const [spX, setSpX] = useState('0');
-  const [spY, setSpY] = useState('0');
-  const [spZ, setSpZ] = useState('48');
+  const [tooltip, setTooltip] = useState<'landing' | 'hover' | null>(null);
 
   const runDemo = useCallback((): void => {
     const tp    = trajectoryPlayerRef.current;
@@ -47,7 +39,7 @@ export default function RocketDemo() {
     if (!tp || !reset) return;
     setSimError('');
     setSimStatus('loading');
-    // Disconnect any live sim before playing the canned demo
+    if (catchEnableTimerRef.current) { clearTimeout(catchEnableTimerRef.current); catchEnableTimerRef.current = null; }
     tp.disconnect();
     catchEnabledRef.current = true;
     setTowerVisibilityRef.current?.(true);
@@ -71,107 +63,27 @@ export default function RocketDemo() {
       .catch((e) => { setSimStatus('error'); setSimError(String(e)); });
   }, []);
 
-  const isDefaultSetpoint = (x: number, y: number, z: number) =>
-    Math.abs(x) < 0.01 && Math.abs(y) < 0.01 && Math.abs(z - 48) < 0.01;
-
-  const runSetpoint = useCallback(() => {
+  const runHover = useCallback((): void => {
     const tp    = trajectoryPlayerRef.current;
     const reset = resetCatchRef.current;
     if (!tp || !reset) return;
-    const x = parseFloat(spX) || 0;
-    const y = parseFloat(spY) || 0;
-    const z = parseFloat(spZ) || 50;
-
-    lastSetpointClickRef.current = Date.now();
-    catchEnabledRef.current = false;
-
-    // If already in a live WS session, just hot-swap the setpoint
-    if (tp.isConnected) {
-      reset();
-      tp.sendSetpoint(x, y, z);
-      lastLiveSetpointRef.current = [x, y, z];
-      return;
-    }
-
     setSimError('');
     setSimStatus('loading');
-
-    const saved = savedFrameRef.current;
-    savedFrameRef.current = null;
-
-    if (saved) {
-      // Resume: booster stays where it is — no fade, no position reset
-      reset();
-      tp.resetKeepPosition();
-      const wsBase = API_URL.replace(/^https/, 'wss').replace(/^http/, 'ws');
-      lastLiveSetpointRef.current = [x, y, z];
-      const [qw, qx, qy, qz] = saved.quat;
-      const [px, py, pz] = saved.pos;
-      const params = `x=${x}&y=${y}&z=${z}&ix=${px}&iy=${py}&iz=${pz}&iqw=${qw}&iqx=${qx}&iqy=${qy}&iqz=${qz}`;
-      tp.connect(`${wsBase}/ws/simulate?${params}`);
-      setSimStatus('playing');
-      return;
-    }
-
-    fadeTowerOutRef.current?.();
-    reset();
-    tp.reset();
-
-    // Default setpoint → play from pre-baked static JSON, no backend needed
-    if (isDefaultSetpoint(x, y, z)) {
-      fetch(`${BASE}landing.json`)
-        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<SimData>; })
-        .then((data) => { tp.playFromData(data); setSimStatus('playing'); })
-        .catch((e) => { setSimStatus('error'); setSimError(String(e)); });
-      return;
-    }
-
-    // Custom setpoint → live WS
-    const wsBase = API_URL.replace(/^https/, 'wss').replace(/^http/, 'ws');
-    lastLiveSetpointRef.current = [x, y, z];
-    if (isFirstSetpointRef.current) {
-      isFirstSetpointRef.current = false;
-      pendingSetpointRef.current = [x, y, z];
-      tp.connect(`${wsBase}/ws/simulate?x=0&y=0&z=20`);
-    } else {
-      tp.connect(`${wsBase}/ws/simulate?x=${x}&y=${y}&z=${z}`);
-    }
-    setSimStatus('playing');
-  }, [spX, spY, spZ]);
+    // Clear any previous catch-enable timer and disable catch until phase 4
+    if (catchEnableTimerRef.current) clearTimeout(catchEnableTimerRef.current);
+    catchEnabledRef.current = false;
+    setTowerVisibilityRef.current?.(true);
+    reset(); tp.reset();
+    // Enable catch at ~100s into playback — booster is descending toward (0,0,48)
+    catchEnableTimerRef.current = setTimeout(() => { catchEnabledRef.current = true; }, 72_000);
+    livePlotsRef.current?.setSlidingWindow(0);
+    fetch(`${BASE}hover.json`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<SimData>; })
+      .then((data) => { tp.playFromData(data); setSimStatus('playing'); })
+      .catch((e) => { setSimStatus('error'); setSimError(String(e)); });
+  }, []);
 
   useEffect(() => { runDemoRef.current = runDemo; }, [runDemo]);
-
-  // Pad-clear handoff + 1-min idle disconnect
-  useEffect(() => {
-    const checkId = setInterval(() => {
-      const tp = trajectoryPlayerRef.current;
-
-      // Once booster clears the pad (z ≥ 15 m), send the user's actual setpoint
-      if (pendingSetpointRef.current && tp) {
-        const pos = tp.latestPos;
-        if (pos && pos[2] >= 15) {
-          const [px, py, pz] = pendingSetpointRef.current;
-          pendingSetpointRef.current = null;
-          tp.sendSetpoint(px, py, pz);
-          lastLiveSetpointRef.current = [px, py, pz];
-        }
-      }
-
-      // 1 min since last "Go to Setpoint" click → close the connection
-      if (
-        tp?.isConnected &&
-        lastSetpointClickRef.current > 0 &&
-        Date.now() - lastSetpointClickRef.current > 60_000
-      ) {
-        lastSetpointClickRef.current = 0;
-        savedFrameRef.current = tp.latestFrame;   // remember where the booster ended up
-        tp.disconnect();
-        setSimStatus('idle');
-      }
-    }, 500);
-
-    return () => clearInterval(checkId);
-  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -611,7 +523,8 @@ controls.minDistance = 2;
       }
 
       trajectoryPlayer = new TrajectoryPlayer(model, gimbalPivots, gimbalBaseQuat, scene);
-      trajectoryPlayer.onMeta  = (total, sp) => { livePlots.setMeta(total, sp); simSetpoint = sp; };
+      trajectoryPlayer.onMeta            = (total, sp) => { livePlots.setMeta(total, sp); simSetpoint = sp; };
+      trajectoryPlayer.onSetpointChange  = (sp) => { livePlots.updateSetpoint(sp); simSetpoint = sp; };
       trajectoryPlayer.onFrame = (t, pos, eng, omega, u_cart) => livePlots.addFrame(t, pos, eng, omega, u_cart);
       trajectoryPlayer.thrustArrows = thrustArrows;
       trajectoryPlayer.thrustRefN   = THRUST_REF_N;
@@ -768,12 +681,6 @@ controls.minDistance = 2;
 
   const isLoading = simStatus === 'loading';
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%', minWidth: 0, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)',
-    borderRadius: '4px', color: 'rgba(255,255,255,0.7)', fontFamily: 'inherit', fontSize: '12px',
-    fontWeight: 400, padding: '4px 4px', textAlign: 'center', boxSizing: 'border-box',
-  };
-
   const btnBase: React.CSSProperties = {
     width: '100%', padding: '8px 0', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.10)',
     cursor: 'pointer', fontFamily: 'inherit', fontSize: '10px', fontWeight: 400,
@@ -817,15 +724,42 @@ controls.minDistance = 2;
           Simulation Control
         </div>
 
-        <button
-          onClick={runDemo}
-          disabled={isLoading}
-          style={{ ...btnBase, borderColor: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.85)', opacity: isLoading ? 0.4 : 1 }}
-          onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'; } }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
-        >
-          Simulate Landing
-        </button>
+        {/* Simulate Landing */}
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={runDemo}
+            disabled={isLoading}
+            style={{ ...btnBase, borderColor: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.85)', opacity: isLoading ? 0.4 : 1, position: 'relative' }}
+            onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'; } }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+          >
+            Simulate Landing
+          </button>
+          <span
+            onMouseEnter={() => setTooltip('landing')}
+            onMouseLeave={() => setTooltip(null)}
+            style={{ position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', width: '14px', height: '14px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)', color: 'rgba(255,255,255,0.40)', fontSize: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', lineHeight: 1, pointerEvents: 'all' }}
+          >?</span>
+          {tooltip === 'landing' && (
+            <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', right: 0, width: '300px', background: 'rgba(8,9,12,0.97)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '14px 16px', pointerEvents: 'none', zIndex: 10 }}>
+              <div style={{ fontSize: '11px', fontWeight: 500, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.85)', marginBottom: '8px' }}>Booster Landing — Final Phase</div>
+              <div style={{ fontSize: '11px', lineHeight: '1.7', color: 'rgba(255,255,255,0.55)', fontWeight: 300 }}>
+                A real booster landing has several distinct phases: a hypersonic re-entry burn with all 13 engines, a grid-fin descent, then a landing burn. This simulation focuses on that last phase: the booster comes in at low altitude with only 3 center engines lit, corrects its attitude and velocity, and touches down on the catch pad.
+              </div>
+              <div style={{ marginTop: '10px', fontSize: '11px', lineHeight: '1.7', color: 'rgba(255,255,255,0.55)', fontWeight: 300 }}>
+                The mechazilla chopstick arms close automatically as the booster enters the final approach corridor.
+              </div>
+              <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {[['Engines', '3 center engines (landing burn)'], ['Actuation', 'TVC: gimbal α, β + throttle'], ['Integrator', 'RK4 @ 5000 Hz']].map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '10px' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.30)', fontWeight: 300, whiteSpace: 'nowrap' }}>{k}</span>
+                    <span style={{ color: 'rgba(159,142,109,0.8)', fontWeight: 400, textAlign: 'right' }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <div style={{ fontSize: '9px', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.55)', textAlign: 'center', marginTop: '6px', fontWeight: 400 }}>
           or press Space
         </div>
@@ -835,31 +769,50 @@ controls.minDistance = 2;
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginBottom: '16px' }} />
 
-        <div style={{ fontSize: '9px', letterSpacing: '0.18em', color: 'rgba(255,255,255,0.50)', textTransform: 'uppercase', marginBottom: '10px', fontWeight: 300 }}>
-          Custom Setpoint (m)
+        {/* Simulate Hover */}
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={runHover}
+            disabled={isLoading}
+            style={{ ...btnBase, borderColor: 'rgba(159,142,109,0.40)', color: '#9F8E6D', opacity: isLoading ? 0.4 : 1 }}
+            onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(159,142,109,0.10)'; e.currentTarget.style.borderColor = 'rgba(159,142,109,0.70)'; } }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'rgba(159,142,109,0.40)'; }}
+          >
+            {isLoading ? 'Running…' : 'Simulate Hover Test'}
+          </button>
+          <span
+            onMouseEnter={() => setTooltip('hover')}
+            onMouseLeave={() => setTooltip(null)}
+            style={{ position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', width: '14px', height: '14px', borderRadius: '50%', border: '1px solid rgba(159,142,109,0.35)', color: 'rgba(159,142,109,0.55)', fontSize: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', lineHeight: 1, pointerEvents: 'all' }}
+          >?</span>
+          {tooltip === 'hover' && (
+            <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', right: 0, width: '300px', background: 'rgba(8,9,12,0.97)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '14px 16px', pointerEvents: 'none', zIndex: 10 }}>
+              <div style={{ fontSize: '11px', fontWeight: 500, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.85)', marginBottom: '8px' }}>Multi-Waypoint LQR Setpoint Tracking</div>
+              <div style={{ fontSize: '11px', lineHeight: '1.7', color: 'rgba(255,255,255,0.55)', fontWeight: 300 }}>
+                Starting from rest at the origin, the same LQR controller tracks a sequence of 3D position setpoints in free space. At each waypoint the controller re-linearises around the new target and drives the booster there from any initial condition.
+              </div>
+              <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                {[['Phase 1', '(0, 0, 0) to (70, 70, 100) m'], ['Phase 2', 'to (−70, 70, 200) m'], ['Phase 3', 'to (70, 131, 300) m'], ['Phase 4', 'to (0, 0, 48) m — autonomous catch']].map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', gap: '10px', fontSize: '10px', alignItems: 'baseline' }}>
+                    <span style={{ color: 'rgba(159,142,109,0.7)', fontWeight: 500, minWidth: '52px' }}>{k}</span>
+                    <span style={{ color: 'rgba(255,255,255,0.45)', fontWeight: 300 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: '10px', fontSize: '11px', lineHeight: '1.7', color: 'rgba(255,255,255,0.55)', fontWeight: 300 }}>
+                On the final approach the chopstick arms close and the booster is caught — identical catch logic to the landing scenario.
+              </div>
+              <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {[['Engines', '3 center engines (hover thrust)'], ['Actuation', 'TVC: gimbal α, β + throttle'], ['Integrator', 'RK4 @ 5000 Hz']].map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '10px' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.30)', fontWeight: 300, whiteSpace: 'nowrap' }}>{k}</span>
+                    <span style={{ color: 'rgba(159,142,109,0.8)', fontWeight: 400, textAlign: 'right' }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', width: '100%', boxSizing: 'border-box' }}>
-          {([['X', spX, setSpX], ['Y', spY, setSpY], ['Z', spZ, setSpZ]] as [string, string, (v: string) => void][]).map(([label, val, setter]) => (
-            <label key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flex: '1 1 0', minWidth: 0 }}>
-              <span style={{ fontSize: '9px', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.50)', fontWeight: 300 }}>{label}</span>
-              <input
-                type="number"
-                value={val}
-                onChange={(e) => setter(e.target.value)}
-                style={inputStyle}
-              />
-            </label>
-          ))}
-        </div>
-        <button
-          onClick={runSetpoint}
-          disabled={isLoading}
-          style={{ ...btnBase, borderColor: 'rgba(159,142,109,0.40)', color: '#9F8E6D', opacity: isLoading ? 0.4 : 1 }}
-          onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(159,142,109,0.10)'; e.currentTarget.style.borderColor = 'rgba(159,142,109,0.70)'; } }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'rgba(159,142,109,0.40)'; }}
-        >
-          {isLoading ? 'Running…' : 'Go to Setpoint'}
-        </button>
 
         {simError && (
           <div style={{ marginTop: '10px', fontSize: '10px', color: '#e06c75', wordBreak: 'break-word', fontWeight: 300 }}>

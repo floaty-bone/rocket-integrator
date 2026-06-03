@@ -196,6 +196,9 @@ export class LivePlots {
   private _dirty     = false;
   private _lastRender = 0;
 
+  // When > 0, sliding-window mode: keep only the latest N samples
+  private _maxSamples = 0;
+
   private times: number[] = [];
   private totalTime = 30;
   private setpoint: [number, number, number] = [0, 0, 0];
@@ -212,6 +215,17 @@ export class LivePlots {
   private omegaRange:  Range   = new Range();
 
   constructor() { this._buildPanel(); }
+
+  /** Call before a live setpoint session to cap memory and scroll the x-axis. */
+  setSlidingWindow(maxSamples: number): void {
+    this._maxSamples = maxSamples;
+  }
+
+  updateSetpoint(setpoint: [number, number, number]): void {
+    this.setpoint = setpoint;
+    for (let i = 0; i < 3; i++) this.posRange[i].add(setpoint[i]);
+    this._dirty = true;
+  }
 
   setMeta(totalTime: number, setpoint: [number, number, number]): void {
     this.totalTime = totalTime; this.setpoint = setpoint;
@@ -235,20 +249,48 @@ export class LivePlots {
     this.times.push(t);
     for (let i = 0; i < 3; i++) {
       this.pos[i].push(pos[i]);
-      this.posRange[i].add(pos[i]);
-
       const a = engines[i][0] * R2D, b = engines[i][1] * R2D;
       this.alpha[i].push(a); this.beta[i].push(b);
-      this.abRange[i].add(a); this.abRange[i].add(b);
-
       const T = engines[i][2];
       const tk = (T !== undefined && isFinite(T)) ? T / 1000 : NaN;
       this.thrust[i].push(tk);
-      if (isFinite(tk)) this.thrustRange[i].add(tk);
-
       this.omega[i].push(omega[i]);
-      this.omegaRange.add(omega[i]);
     }
+
+    // Trim oldest sample when sliding-window mode is active
+    if (this._maxSamples > 0 && this.times.length > this._maxSamples) {
+      this.times.shift();
+      for (let i = 0; i < 3; i++) {
+        this.pos[i].shift(); this.alpha[i].shift(); this.beta[i].shift();
+        this.thrust[i].shift(); this.omega[i].shift();
+      }
+      // Recompute ranges from scratch over the retained window
+      for (let i = 0; i < 3; i++) {
+        this.posRange[i].reset(); this.posRange[i].add(this.setpoint[i]);
+        this.abRange[i].reset(); this.thrustRange[i].reset();
+        for (let j = 0; j < this.times.length; j++) {
+          this.posRange[i].add(this.pos[i][j]);
+          this.abRange[i].add(this.alpha[i][j]); this.abRange[i].add(this.beta[i][j]);
+          if (isFinite(this.thrust[i][j])) this.thrustRange[i].add(this.thrust[i][j]);
+        }
+      }
+      this.omegaRange.reset();
+      for (let j = 0; j < this.times.length; j++) {
+        for (let i = 0; i < 3; i++) this.omegaRange.add(this.omega[i][j]);
+      }
+    } else {
+      // Append-only: just extend ranges with new values
+      for (let i = 0; i < 3; i++) {
+        this.posRange[i].add(pos[i]);
+        const a = engines[i][0] * R2D, b = engines[i][1] * R2D;
+        this.abRange[i].add(a); this.abRange[i].add(b);
+        const T = engines[i][2];
+        const tk = (T !== undefined && isFinite(T)) ? T / 1000 : NaN;
+        if (isFinite(tk)) this.thrustRange[i].add(tk);
+        this.omegaRange.add(omega[i]);
+      }
+    }
+
     this._dirty = true;
   }
 
@@ -259,17 +301,22 @@ export class LivePlots {
     this._lastRender = now;
     this._dirty = false;
 
+    // In sliding mode the x-axis spans the retained window, not totalTime
+    const windowDuration = this._maxSamples > 0 && this.times.length >= 2
+      ? this.times[this.times.length - 1] - this.times[0]
+      : this.totalTime;
+    // Re-zero times relative to window start for the draw helpers
+    const t0 = this.times.length ? this.times[0] : 0;
+    const relTimes = this.times.map(t => t - t0);
+
     const axLabels: ("X"|"Y"|"Z")[] = ["X", "Y", "Z"];
-    // ctxs[0..2]: position X/Y/Z
     for (let i = 0; i < 3; i++) {
-      drawPositionPlot(this.ctxs[i], axLabels[i], this.times, this.pos[i], this.setpoint[i], this.totalTime, this.posRange[i]);
+      drawPositionPlot(this.ctxs[i], axLabels[i], relTimes, this.pos[i], this.setpoint[i], windowDuration, this.posRange[i]);
     }
-    // ctxs[3..5]: engine 1/2/3 gimbal
     for (let i = 0; i < 3; i++) {
-      drawEnginePlot(this.ctxs[3 + i], `Engine ${i + 1}`, this.times, this.alpha[i], this.beta[i], this.thrust[i], this.totalTime, this.abRange[i], this.thrustRange[i]);
+      drawEnginePlot(this.ctxs[3 + i], `Engine ${i + 1}`, relTimes, this.alpha[i], this.beta[i], this.thrust[i], windowDuration, this.abRange[i], this.thrustRange[i]);
     }
-    // ctxs[6]: combined body rates
-    drawOmegaCombinedPlot(this.ctxs[6], this.times, this.omega[0], this.omega[1], this.omega[2], this.totalTime, this.omegaRange);
+    drawOmegaCombinedPlot(this.ctxs[6], relTimes, this.omega[0], this.omega[1], this.omega[2], windowDuration, this.omegaRange);
   }
 
   dispose(): void {

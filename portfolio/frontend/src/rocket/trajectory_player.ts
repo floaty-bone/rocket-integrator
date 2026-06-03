@@ -6,6 +6,7 @@ export interface SimMeta {
   dt: number;
   total_time: number;
   setpoint: [number, number, number];
+  setpoint_changes?: { t: number; setpoint: [number, number, number] }[];
 }
 
 export interface SimFrame {
@@ -36,9 +37,10 @@ export class TrajectoryPlayer {
   public thrustArrowBaseLen = 0;
   public thrustRefN = 1_000_000;
 
-  onMeta?:     (totalTime: number, setpoint: [number, number, number]) => void;
-  onFrame?:    (t: number, pos: [number, number, number], engines: [number, number, number][], omega: [number, number, number], u_cart?: [number, number, number][]) => void;
-  onComplete?: () => void;
+  onMeta?:            (totalTime: number, setpoint: [number, number, number]) => void;
+  onSetpointChange?:  (setpoint: [number, number, number]) => void;
+  onFrame?:           (t: number, pos: [number, number, number], engines: [number, number, number][], omega: [number, number, number], u_cart?: [number, number, number][]) => void;
+  onComplete?:        () => void;
 
   private ws: WebSocket | null = null;
   private meta:   SimMeta | null = null;
@@ -46,8 +48,9 @@ export class TrajectoryPlayer {
   private frameB: SimFrame | null = null;
   private startWallTime = 0;
 
-  private _dataFrames:   SimFrame[] | null = null;
-  private _dataFrameIdx  = 0;
+  private _dataFrames:      SimFrame[] | null = null;
+  private _dataFrameIdx     = 0;
+  private _spChangeIdx      = 0;  // next setpoint_changes entry to check
 
   private readonly _C    = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
   private readonly _Cinv = new THREE.Quaternion( Math.SQRT1_2, 0, 0, Math.SQRT1_2);
@@ -65,7 +68,7 @@ export class TrajectoryPlayer {
   private _trailLine:  THREE.Line | null = null;
   private _trailBuf:   Float32Array | null = null;
   private _trailCount  = 0;
-  private static readonly TRAIL_MAX = 4000;
+  private static readonly TRAIL_MAX = 15000;
 
   constructor(
     booster: THREE.Object3D,
@@ -124,6 +127,7 @@ export class TrajectoryPlayer {
     this.meta = data.meta;
     this._dataFrames = data.frames;
     this._dataFrameIdx = 0;
+    this._spChangeIdx  = 0;
     this.frameA = data.frames[0];
     this.frameB = data.frames[1] ?? data.frames[0];
     this.startWallTime = performance.now();
@@ -175,6 +179,21 @@ export class TrajectoryPlayer {
     if (!this._dataFrames || !this.meta) return;
     const elapsed = (performance.now() - this.startWallTime) / 1000;
     const frames  = this._dataFrames;
+    const changes = this.meta.setpoint_changes;
+
+    // Fire onMeta for each setpoint change boundary we've passed
+    if (changes) {
+      while (this._spChangeIdx < changes.length && elapsed >= changes[this._spChangeIdx].t) {
+        const sp = changes[this._spChangeIdx].setpoint;
+        if (this._spChangeIdx === 0) {
+          // First entry is the initial setpoint — already handled by onMeta at playback start
+        } else {
+          this.onSetpointChange?.(sp);
+        }
+        this._spChangeIdx++;
+      }
+    }
+
     while (this._dataFrameIdx + 1 < frames.length && elapsed >= frames[this._dataFrameIdx + 1].t) {
       this._dataFrameIdx++;
       const f = frames[this._dataFrameIdx];
@@ -193,7 +212,7 @@ export class TrajectoryPlayer {
     }
   }
 
-  private _clearData(): void { this._dataFrames = null; this._dataFrameIdx = 0; }
+  private _clearData(): void { this._dataFrames = null; this._dataFrameIdx = 0; this._spChangeIdx = 0; }
 
   private _onMessage(msg: SimMeta | SimFrame): void {
     if (msg.type === "meta") { this.meta = msg as SimMeta; this.startWallTime = performance.now(); this.onMeta?.(this.meta.total_time, this.meta.setpoint); return; }
@@ -238,7 +257,8 @@ export class TrajectoryPlayer {
   private _initTrail(): void {
     if (this._trailLine) { this._scene.remove(this._trailLine); this._trailLine.geometry.dispose(); this._trailLine = null; }
     const max = TrajectoryPlayer.TRAIL_MAX;
-    this._trailBuf = new Float32Array(max * 3); this._trailCount = 0;
+    this._trailBuf = new Float32Array(max * 3);
+    this._trailCount = 0;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(this._trailBuf, 3));
     geo.setDrawRange(0, 0);
@@ -250,7 +270,7 @@ export class TrajectoryPlayer {
 
   private _appendTrail(): void {
     if (!this._trailLine || !this._trailBuf || this._trailCount >= TrajectoryPlayer.TRAIL_MAX) return;
-    const p = this.booster.position;
+    const p   = this.booster.position;
     const idx = this._trailCount * 3;
     this._trailBuf[idx] = p.x; this._trailBuf[idx + 1] = p.y; this._trailBuf[idx + 2] = p.z;
     this._trailCount++;
