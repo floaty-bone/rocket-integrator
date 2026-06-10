@@ -7,9 +7,8 @@ the vehicle dynamics, synthesises an LQR attitude/translation controller via
 JAX autodiff, runs a software-in-the-loop (SIL) closed-loop simulation, and
 streams the resulting trajectory in real time to a Three.js renderer.
 
-The same dynamics core has a standalone C++ port (`cpp/`), a browser renderer
-(`rendering/`), and is embedded as an interactive demo in a personal portfolio
-site (`portfolio/`).
+The same dynamics core has a standalone C++ port (`cpp/`) and a browser renderer
+(`rendering/`).
 
 ---
 
@@ -44,7 +43,6 @@ rocket-integrator/
 ├── python/          # ⭐ the rocket package — dynamics, control, SIL, viz
 ├── cpp/             # C++ port of the integrator (CSV output)
 ├── rendering/       # Three.js / Vite renderer + WebSocket trajectory player
-├── portfolio/       # React front-end + FastAPI backend (embeds the demo)
 └── README.md
 ```
 
@@ -86,7 +84,6 @@ python/rocket/
 │   ├── sil_hover.py       # closed-loop LQR hover & translate + WS streaming
 │   └── lqr_sanity_check.py# one-shot gain / control-output check
 │
-├── tests/           # self-contained smoke / unit tests
 └── docs/
     └── controller-twitching.md  # a real debugging write-up (see below)
 ```
@@ -184,24 +181,6 @@ and live telemetry plots.
 
 ---
 
-## Tests
-
-The tests are self-contained scripts (no pytest harness required):
-
-```bash
-cd python
-uv run python -m rocket.tests.test_tangent_controller   # quaternion / tangent-space algebra
-uv run python -m rocket.tests.test_sil                  # end-to-end controller smoke test
-uv run python -m rocket.tests.test_lqr                  # LQR / controllability check
-```
-
-`test_tangent_controller` is the most thorough — it verifies the `L(q)`
-quaternion algebra, the `E(q)` tangent-space basis and its pseudoinverse, the
-`qtorp` Rodrigues conversion (including the quaternion double-cover), and that
-the LQR feedback law is invariant under the tangent-space scale convention.
-
----
-
 ## Configuration
 
 All vehicle parameters live in `python/rocket/config/vehicle.py` (mass, inertia,
@@ -248,12 +227,6 @@ grid fins and animates them either from a scripted trajectory (**T**) or from a
 live WebSocket feed of a SIL run (**P**). `rendering/EXPORT_PIPELINE.md`
 documents the Creo → Blender → glTF asset pipeline, including the exact part
 names and pivot placements the renderer expects.
-
-### `portfolio/` — personal site
-
-A React/Vite front-end (`portfolio/frontend`) with a FastAPI backend
-(`portfolio/backend`) that embeds the rocket demo as an interactive page, with
-backend-free baked playback for static hosting.
 
 ---
 
